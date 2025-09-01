@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, interpolate } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, interpolate, withRepeat } from 'react-native-reanimated';
 import {
     View,
     Text,
@@ -7,9 +7,11 @@ import {
     StatusBar,
     ImageBackground,
     ScrollView,
+    SectionList,
     TouchableOpacity,
     ActivityIndicator,
-    Dimensions
+    Dimensions,
+    Image
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { LineChart } from 'react-native-chart-kit';
@@ -84,6 +86,17 @@ const HomeScreen = () => {
     const indicatorPosition = useSharedValue(0);
     const indicatorWidth = useSharedValue(80);
     const scrollX = useSharedValue(0);
+    
+    // Blinking animation for device status values
+    const blinkOpacity = useSharedValue(1);
+    
+    useEffect(() => {
+        blinkOpacity.value = withRepeat(
+            withTiming(0.3, { duration: 2500 }),
+            -1,
+            true
+        );
+    }, []);
     const subtabScrollViewRef = useRef<ScrollView>(null);
     const tabs = ['Stats', 'Device Status', 'Feeding Trend', 'Freshness Monitoring', 'Recent Activity'];
     const [tabLayouts, setTabLayouts] = useState<{ [key: string]: { x: number; width: number } }>({});
@@ -552,20 +565,20 @@ const HomeScreen = () => {
             <View style={styles.statsGrid}>
                 <View style={styles.statCard}>
                     <View style={styles.statHeader}>
-                        <FontAwesome5 name="calendar" style={[styles.statIcon, styles.green]} />
-                        <FontAwesome5 name="chart-line" style={[styles.statTrend, styles.green]} />
+                        <FontAwesome5 name="calendar" style={[styles.statIcon, styles.yellow]} />
+                        <FontAwesome5 name="chart-line" style={[styles.statTrend, styles.yellow]} />
                     </View>
                     <View style={styles.statContent}>
-                        <Text style={styles.statLabel}>Today's Feedings</Text>
+                        <Text style={[styles.statLabel]}>Today's Feedings</Text>
                         <Text style={styles.statValue}>{data.stats.today_dispense_count}</Text>
-                        <Text style={[styles.statChange, styles.positive]}>Dispenses</Text>
+                        <Text style={[styles.statChange, styles.yellow]}>Dispenses</Text>
                     </View>
                 </View>
 
                 <View style={styles.statCard}>
                     <View style={styles.statHeader}>
                         <FontAwesome5 name="bullseye" style={[styles.statIcon, styles.yellow]} />
-                        <FontAwesome5 name="chart-line" style={[styles.statTrend, styles.green]} />
+                        <FontAwesome5 name="chart-line" style={[styles.statTrend, styles.yellow]} />
                     </View>
                     <View style={styles.statContent}>
                         <Text style={styles.statLabel}>Weekly Dispense Count</Text>
@@ -576,25 +589,25 @@ const HomeScreen = () => {
 
                 <View style={styles.statCard}>
                     <View style={styles.statHeader}>
-                        <FontAwesome5 name="check-circle" style={[styles.statIcon, styles.blue]} />
-                        <FontAwesome5 name="chart-line" style={[styles.statTrend, styles.green]} />
+                        <FontAwesome5 name="check-circle" style={[styles.statIcon, styles.yellow]} />
+                        <FontAwesome5 name="chart-line" style={[styles.statTrend, styles.yellow]} />
                     </View>
                     <View style={styles.statContent}>
                         <Text style={styles.statLabel}>Pets Fed Today</Text>
                         <Text style={styles.statValue}>{data.stats.today_unique_pets}</Text>
-                        <Text style={[styles.statChange, styles.positive]}>Unique Tags</Text>
+                        <Text style={[styles.statChange, styles.yellow]}>Unique Tags</Text>
                     </View>
                 </View>
 
                 <View style={styles.statCard}>
                     <View style={styles.statHeader}>
-                        <FontAwesome5 name="bolt" style={[styles.statIcon, styles.purple]} />
-                        <FontAwesome5 name="wave-square" style={[styles.statTrend, styles.purple]} />
+                        <FontAwesome5 name="bolt" style={[styles.statIcon, styles.yellow]} />
+                        <FontAwesome5 name="wave-square" style={[styles.statTrend, styles.yellow]} />
                     </View>
                     <View style={styles.statContent}>
                         <Text style={styles.statLabel}>Pets Detected (All Time)</Text>
                         <Text style={styles.statValue}>{data.stats.total_unique_uids}</Text>
-                        <Text style={[styles.statChange, styles.improvement]}>Unique Pets</Text>
+                        <Text style={[styles.statChange, styles.yellow]}>Unique Pets</Text>
                     </View>
                 </View>
             </View>
@@ -654,8 +667,10 @@ const HomeScreen = () => {
                             <FontAwesome5 name="paw" size={16} color="#fff" />
                         </View>
                         <View style={styles.metricInfo}>
-                            <Text style={styles.metricLabel}>Power Source</Text>
-                            <Text style={styles.metricValue}>Solar Battery</Text>
+                            <View style={styles.metricRow}>
+                                <Text style={styles.metricLabel}>Power Source</Text>
+                                <Text style={styles.metricValue}>Solar Battery</Text>
+                            </View>
                         </View>
                     </View>
 
@@ -664,8 +679,10 @@ const HomeScreen = () => {
                             <FontAwesome5 name={getBatteryIcon(data.device_status.battery_level)} size={16} color="#fff" />
                         </View>
                         <View style={styles.metricInfo}>
-                            <Text style={styles.metricLabel}>Battery</Text>
-                            <Text style={styles.metricValue}>{data.device_status.battery_level}%</Text>
+                            <View style={styles.metricRow}>
+                                <Text style={styles.metricLabel}>Battery</Text>
+                                <Text style={styles.metricValue}>{data.device_status.battery_level}%</Text>
+                            </View>
                         </View>
                     </View>
 
@@ -674,10 +691,12 @@ const HomeScreen = () => {
                             <FontAwesome5 name="wifi" size={16} color="#fff" />
                         </View>
                         <View style={styles.metricInfo}>
-                            <Text style={styles.metricLabel}>WiFi Signal</Text>
-                            <Text style={styles.metricValue}>
-                                {formatWifiSignal(data.device_status.wifi_signal)}
-                            </Text>
+                            <View style={styles.metricRow}>
+                                <Text style={styles.metricLabel}>WiFi Signal</Text>
+                                <Text style={styles.metricValue}>
+                                    {formatWifiSignal(data.device_status.wifi_signal)}
+                                </Text>
+                            </View>
                         </View>
                     </View>
 
@@ -686,8 +705,10 @@ const HomeScreen = () => {
                             <MaterialCommunityIcons name="box" size={16} color="#fff" />
                         </View>
                         <View style={styles.metricInfo}>
-                            <Text style={styles.metricLabel}>Container Level</Text>
-                            <Text style={styles.metricValue}>{data.device_status.container_level}%</Text>
+                            <View style={styles.metricRow}>
+                                <Text style={styles.metricLabel}>Container Level</Text>
+                                <Text style={styles.metricValue}>{data.device_status.container_level}%</Text>
+                            </View>
                         </View>
                     </View>
 
@@ -696,24 +717,30 @@ const HomeScreen = () => {
                             <MaterialCommunityIcons name="food" size={16} color="#fff" />
                         </View>
                         <View style={styles.metricInfo}>
-                            <Text style={styles.metricLabel}>Food Level</Text>
-                            <Text style={styles.metricValue}>{data.device_status.tray_level}%</Text>
+                            <View style={styles.metricRow}>
+                                <Text style={styles.metricLabel}>Food Level</Text>
+                                <Text style={styles.metricValue}>{data.device_status.tray_level}%</Text>
+                            </View>
                         </View>
                     </View>
                 </View>
 
                 <View style={styles.deviceTimes}>
                     <View style={styles.timeInfo}>
-                        <Text style={styles.timeLabel}>Last Fed</Text>
-                        <Text style={styles.timeValue}>
-                            {formatTimeForDisplay(data.stats.last_fed_time)}
-                        </Text>
+                        <View style={styles.metricRow}>
+                            <Text style={styles.timeLabel}>Last Fed</Text>
+                            <Text style={styles.timeValue}>
+                                {formatTimeForDisplay(data.stats.last_fed_time)}
+                            </Text>
+                        </View>
                     </View>
                     <View style={styles.timeInfo}>
-                        <Text style={styles.timeLabel}>Portion Size</Text>
-                        <Text style={styles.timeValue}>
-                            {data.current_settings.portion_level}%
-                        </Text>
+                        <View style={styles.metricRow}>
+                            <Text style={styles.timeLabel}>Portion Size</Text>
+                            <Text style={styles.timeValue}>
+                                {data.current_settings.portion_level}%
+                            </Text>
+                        </View>
                     </View>
                 </View>
             </View>
@@ -738,9 +765,10 @@ const HomeScreen = () => {
         return (
             <View style={styles.panel}>
                 <View style={styles.panelHeader}>
-                    <Text style={styles.panelTitle}>
-                        <FontAwesome5 name="chart-bar" size={16} color="#fff" /> Feeding Trend
-                    </Text>
+                    <View style={styles.panelTitleRow}>
+                        <FontAwesome5 name="chart-bar" size={16} color="#ff9100" />
+                        <Text style={styles.panelTitle}>Feeding Trend</Text>
+                    </View>
                     <View style={styles.dropdownContainer} ref={dropdownRef}>
                         <TouchableOpacity
                             style={styles.dropdownButton}
@@ -793,7 +821,7 @@ const HomeScreen = () => {
                             backgroundGradientFromOpacity: 0,
                             backgroundGradientToOpacity: 0,
                             decimalPlaces: 0,
-                            color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                            color: (opacity = 1) => `rgba(255, 145, 0, ${opacity})`,
                             labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
                             style: {
                                 borderRadius: 16,
@@ -801,7 +829,7 @@ const HomeScreen = () => {
                             propsForDots: {
                                 r: "6",
                                 strokeWidth: "2",
-                                stroke: "#ffffff"
+                                stroke: "#ff9100"
                             }
                         }}
                         bezier
@@ -855,41 +883,48 @@ const HomeScreen = () => {
         return (
             <View style={styles.panel}>
                 <View style={styles.panelHeader}>
-                    <Text style={styles.panelTitle}>
-                        <FontAwesome5 name="leaf" size={16} color="#fff" /> Freshness Monitoring
-                    </Text>
+                    <View style={styles.panelTitleRow}>
+                        <FontAwesome5 name="leaf" size={16} color="#ff9100" />
+                        <Text style={styles.panelTitle}>Freshness Monitoring</Text>
+                    </View>
                 </View>
 
-                <View style={styles.controlMetrics}>
-                    <View style={styles.controlMetric}>
-                        <View style={styles.controlIcon}>
+                <View style={styles.freshnessMetrics}>
+                    <View style={styles.metric}>
+                        <View style={[styles.metricIcon, styles.mode]}>
                             <FontAwesome5 name="clock" size={16} color="#fff" />
                         </View>
-                        <View style={styles.controlInfo}>
-                            <Text style={styles.controlLabel}>Last Tray Reset</Text>
-                            <Text style={styles.controlValue}>{data.last_empty_time}</Text>
+                        <View style={styles.metricInfo}>
+                            <View style={styles.metricRow}>
+                                <Text style={styles.metricLabel}>Last Tray Reset</Text>
+                                <Text style={styles.metricValue}>{data.last_empty_time}</Text>
+                            </View>
                         </View>
                     </View>
 
-                    <View style={styles.controlMetric}>
-                        <View style={styles.controlIcon}>
+                    <View style={styles.metric}>
+                        <View style={[styles.metricIcon, styles.mode]}>
                             <FontAwesome5 name="hourglass-half" size={16} color="#fff" />
                         </View>
-                        <View style={styles.controlInfo}>
-                            <Text style={styles.controlLabel}>Time Since Reset</Text>
-                            <Text style={styles.controlValue}>{data.time_since_reset}</Text>
+                        <View style={styles.metricInfo}>
+                            <View style={styles.metricRow}>
+                                <Text style={styles.metricLabel}>Time Since Reset</Text>
+                                <Text style={styles.metricValue}>{data.time_since_reset}</Text>
+                            </View>
                         </View>
                     </View>
 
-                    <View style={[styles.controlMetric, isStale() && styles.alertActive]}>
-                        <View style={styles.controlIcon}>
+                    <View style={[styles.metric, isStale() && styles.alertActive]}>
+                        <View style={[styles.metricIcon, styles.mode]}>
                             <FontAwesome5 name={isStale() ? "triangle-exclamation" : "check-circle"} size={16} color="#fff" />
                         </View>
-                        <View style={styles.controlInfo}>
-                            <Text style={styles.controlLabel}>Food Freshness</Text>
-                            <Text style={[styles.controlValue, isStale() && styles.alertText]}>
-                                {isStale() ? 'STALE FOOD' : 'Fresh'}
-                            </Text>
+                        <View style={styles.metricInfo}>
+                            <View style={styles.metricRow}>
+                                <Text style={styles.metricLabel}>Food Freshness</Text>
+                                <Text style={[styles.metricValue, isStale() && styles.alertText]}>
+                                    {isStale() ? 'STALE FOOD' : 'Fresh'}
+                                </Text>
+                            </View>
                         </View>
                     </View>
                 </View>
@@ -897,40 +932,135 @@ const HomeScreen = () => {
         );
     };
 
-    const renderRecentActivity = () => {
+    const renderRecentActivityWithStickyHeader = () => {
         if (!data) return null;
 
         return (
-            <View style={styles.panel}>
-                <View style={styles.panelHeader}>
-                    <Text style={styles.panelTitle}>
-                        <FontAwesome5 name="clock" size={16} color="#fff" /> Recent Activity
-                    </Text>
+            <View>
+                <View style={[styles.panel, styles.stickyHeader]}>
+                    <View style={styles.panelHeader}>
+                        <View style={styles.panelTitleRow}>
+                            <FontAwesome5 name="clock" size={16} color="#ff9100" />
+                            <Text style={styles.panelTitle}>Recent Activity</Text>
+                        </View>
+                    </View>
                 </View>
-
-                <ScrollView
-                    style={styles.scrollableActivities}
-                    nestedScrollEnabled={true}
-                >
+                <View style={styles.activityItemContainer}>
                     {data.recent_activities.map((item, index) => (
-                        <View key={index} style={styles.activityItem}>
-                            <View style={[styles.activityIcon, item.type === 'feeding' ? styles.feedingIcon : styles.resetIcon]}>
+                        <View key={index} style={styles.metric}>
+                            <View style={[styles.metricIcon, item.type === 'feeding' ? styles.feedingIcon : styles.resetIcon]}>
                                 <FontAwesome5 name={item.type === 'feeding' ? "paw" : "clock-rotate-left"} size={16} color="#fff" />
                             </View>
-                            <View style={styles.activityContent}>
-                                <Text style={styles.activityMessage}>
-                                    {item.uid && (
-                                        <Text> </Text>
-                                    )}
+                            <View style={styles.metricInfo}>
+                                <Text style={styles.metricLabel}>
+                                    {item.uid && <Text> </Text>}
                                     {item.message}
                                 </Text>
                                 <Text style={styles.activityTime}>{item.time}</Text>
                             </View>
                         </View>
                     ))}
-                </ScrollView>
+                </View>
             </View>
         );
+    };
+
+    // Prepare section data for SectionList
+    const prepareSectionData = () => {
+        if (!data) return [];
+        
+        return [
+            {
+                title: 'Stats',
+                key: 'stats',
+                data: [{ type: 'stats', content: renderStatsCards() }],
+            },
+            {
+                title: 'Device Status',
+                key: 'device-status',
+                data: [{ type: 'device-status', content: renderDeviceStatus() }],
+            },
+            {
+                title: 'Feeding Trend',
+                key: 'feeding-trend',
+                data: [{ type: 'feeding-trend', content: renderFeedingTrend() }],
+            },
+            {
+                title: 'Freshness Monitoring',
+                key: 'freshness-monitoring',
+                data: [{ type: 'freshness-monitoring', content: renderFreshnessMonitoring() }],
+            },
+            {
+                title: 'Recent Activity',
+                key: 'recent-activity',
+                data: [{ 
+                    type: 'activity-container', 
+                    key: 'activities',
+                    activities: data.recent_activities 
+                }],
+            },
+        ];
+    };
+
+    const renderSectionHeader = ({ section }: { section: any }) => {
+        if (section.key !== 'recent-activity') return null;
+        
+        return (
+            <View style={[styles.panel, styles.stickyHeader]}>
+                <View style={styles.panelHeader}>
+                    <View style={styles.panelTitleRow}>
+                        <FontAwesome5 name="clock" size={16} color="#ff9100" />
+                        <Text style={styles.panelTitle}>Recent Feeding Activity</Text>
+                    </View>
+                </View>
+            </View>
+        );
+    };
+
+    const renderSectionItem = ({ item, section }: { item: any; section: any }) => {
+        if (section.key === 'recent-activity' && item.type === 'activity-container') {
+            return (
+                <View style={styles.activityItemContainer} onLayout={handleLayout('Recent Activity')}>
+                    {item.activities.map((activityItem: any, index: number) => (
+                        <View key={index} style={styles.metric}>
+                            <View style={[styles.metricIcon, activityItem.type === 'feeding' ? styles.feedingIcon : styles.resetIcon]}>
+                                <FontAwesome5 name={activityItem.type === 'feeding' ? "paw" : "clock-rotate-left"} size={16} color="#fff" />
+                            </View>
+                            <View style={styles.metricInfo}>
+                                <Text style={styles.metricLabel}>
+                                    {activityItem.uid && <Text> </Text>}
+                                    {activityItem.message}
+                                </Text>
+                                <Text style={styles.activityTime}>{activityItem.time}</Text>
+                            </View>
+                        </View>
+                    ))}
+                </View>
+            );
+        } else {
+            // For other sections, just render the content with layout tracking
+            let tabName = '';
+            switch (section.key) {
+                case 'stats':
+                    tabName = 'Stats';
+                    break;
+                case 'device-status':
+                    tabName = 'Device Status';
+                    break;
+                case 'feeding-trend':
+                    tabName = 'Feeding Trend';
+                    break;
+                case 'freshness-monitoring':
+                    tabName = 'Freshness Monitoring';
+                    break;
+            }
+            
+            return (
+                <View onLayout={handleLayout(tabName)}>
+                    {item.content}
+                </View>
+            );
+        }
     };
 
     if (!fontsLoaded || loading) {
@@ -954,11 +1084,16 @@ const HomeScreen = () => {
                         <View style={styles.logoSection}>
                             <View style={styles.dashboardTitleRow}>
                                 <Text style={styles.headerText}>Dashboard</Text>
-                                <View style={styles.taglineBox}>
-                                    <FontAwesome5 name="paw" size={12} color="#fff" style={styles.pawHeader} />
-                                    <Text style={styles.taglineText}> Stay on top of Kibbler activity and insights</Text>
-                                </View>
-                                <View style={styles.headerData}>
+                                <Image 
+                                    source={require('../../assets/Paw-Logo.png')} 
+                                    style={styles.headerIcon}
+                                />
+                            </View>
+                            <View style={styles.taglineBox}>
+                                <FontAwesome5 name="paw" size={12} color="#fff" style={styles.pawHeader} />
+                                <Text style={styles.taglineText}> Stay on top of Kibbler activity and insights</Text>
+                            </View>
+                            <View style={styles.headerData}>
                                     <View style={[styles.statusBadge, data?.device_status.status === 'online' ? styles.connected : styles.disconnected]}>
                                         <View style={[
                                             styles.statusDot,
@@ -971,11 +1106,10 @@ const HomeScreen = () => {
                                         </Text>
                                     </View>
                                     <View style={styles.batteryIndicator}>
-                                        <FontAwesome5 name={getBatteryIcon(data?.device_status.battery_level || 0)} size={16} color="#fff" style={styles.batteryIcon} />
+                                        <FontAwesome5 name={getBatteryIcon(data?.device_status.battery_level || 0)} size={16} color="#fea127ff" style={styles.batteryIcon} />
                                         <Text style={styles.batteryText}>{data?.device_status.battery_level}%</Text>
                                     </View>
                                 </View>
-                            </View>
                         </View>
                     </View>
 
@@ -1061,7 +1195,7 @@ const HomeScreen = () => {
                         </View>
 
                         <View onLayout={handleLayout('Recent Activity')}>
-                            {renderRecentActivity()}
+                            {renderRecentActivityWithStickyHeader()}
                         </View>
                     </ScrollView>
                 </View>
@@ -1098,12 +1232,24 @@ const styles = StyleSheet.create({
         height: 210
     },
     logoSection: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: 'column',
+        alignItems: 'stretch',
     },
     dashboardTitleRow: {
-        flexDirection: 'column',
-        marginTop: 20
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 20,
+    },
+    headerTitleContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    headerIcon: {
+        width: 30,
+        height: 30,
+        marginLeft: 20,
     },
     headerText: {
         color: '#FFFFFF',
@@ -1153,7 +1299,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#00C853',
     },
     disconnectedDot: {
-        backgroundColor: '#FF4747',
+        backgroundColor: '#1a1a1aff',
     },
     statusText: {
         color: '#fff',
@@ -1234,7 +1380,7 @@ const styles = StyleSheet.create({
         flexWrap: 'wrap',
         justifyContent: 'space-between',
         paddingHorizontal: 15,
-        marginBottom: 20,
+        marginBottom: 8,
     },
     statCard: {
         width: '48%',
@@ -1266,6 +1412,9 @@ const styles = StyleSheet.create({
     purple: {
         color: '#9C27B0',
     },
+    orange: {
+        color: '#ff4011ff',
+    },
     statContent: {},
     statLabel: {
         color: '#FFFFFF',
@@ -1295,7 +1444,7 @@ const styles = StyleSheet.create({
     panel: {
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
         borderRadius: 12,
-        padding: 15,
+        padding: 20,
         marginHorizontal: 15,
         marginBottom: 20,
     },
@@ -1303,65 +1452,87 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 15,
+        marginBottom: 25,
+    },
+    panelTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     panelTitle: {
         color: '#fff',
         fontFamily: 'Poppins-SemiBold',
         fontSize: 16,
+        marginLeft: 10,
     },
     deviceMetrics: {
         marginBottom: 15,
     },
+    freshnessMetrics: {
+        marginBottom: 0,
+    },
+    activityMetrics: {
+        marginBottom: 0,
+    },
     metric: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: 25,
     },
     metricIcon: {
         width: 32,
         height: 32,
-        borderRadius: 16,
+        borderRadius: 10,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 10,
+        marginRight: 5,
+        marginLeft: 10,
     },
     mode: {
-        backgroundColor: '#FF7043',
+        backgroundColor: '#ff9100',
     },
     battery: {
-        backgroundColor: '#4CAF50',
+        backgroundColor: '#ff9100',
     },
     wifi: {
-        backgroundColor: '#2196F3',
+        backgroundColor: '#ff9100',
     },
     temp: {
-        backgroundColor: '#9C27B0',
+        backgroundColor: '#ff9100',
     },
     food: {
-        backgroundColor: '#FF9800',
+        backgroundColor: '#ff9100',
     },
     metricInfo: {
         flex: 1,
+        marginLeft: 10,
+    },
+    metricRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
     },
     metricLabel: {
         color: '#e8e8e8ff',
         fontFamily: 'Poppins-Medium',
-        fontSize: 12,
+        fontSize: 14,
     },
     metricValue: {
         color: '#fff',
         fontFamily: 'Poppins-SemiBold',
         fontSize: 14,
+        marginRight: 15,
     },
     deviceTimes: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
+        flexDirection: 'column',
         borderTopWidth: 1,
         borderTopColor: '#2d2d2d',
         paddingTop: 15,
+        marginLeft: 10,
+        marginRight: 12,
     },
-    timeInfo: {},
+    timeInfo: {
+        marginBottom: 10,
+    },
     timeLabel: {
         color: '#a0a0a0',
         fontFamily: 'Poppins',
@@ -1375,7 +1546,7 @@ const styles = StyleSheet.create({
     chartContainer: {
         alignItems: 'center',
         backgroundColor: 'transparent',
-        marginRight: 50
+        marginRight: 35
     },
     controlMetrics: {
         marginTop: 10,
@@ -1384,8 +1555,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#2d2d2d',
     },
     alertActive: {
         backgroundColor: 'rgba(255, 71, 71, 0)',
@@ -1434,10 +1603,8 @@ const styles = StyleSheet.create({
         marginRight: 10,
     },
     feedingIcon: {
-        backgroundColor: '#dd2c00',
     },
     resetIcon: {
-        backgroundColor: '#2196F3',
     },
     activityContent: {
         flex: 1,
@@ -1499,6 +1666,27 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontFamily: 'Poppins',
         fontSize: 14,
+    },
+    stickyHeader: {
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        marginBottom: 0,
+        paddingBottom: 0,
+        marginHorizontal: 15,
+        borderTopLeftRadius: 12,
+        borderTopRightRadius: 12,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+    },
+    activityItemContainer: {
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        borderTopLeftRadius: 0,
+        borderTopRightRadius: 0,
+        borderBottomLeftRadius: 12,
+        borderBottomRightRadius: 12,
+        paddingLeft: 10,
+        paddingRight: 20,
+        marginHorizontal: 15,
+        marginBottom: 20,
     },
 });
 

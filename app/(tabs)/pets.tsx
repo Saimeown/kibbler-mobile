@@ -11,7 +11,8 @@ import {
   TextInput,
   FlatList,
   Modal,
-  ScrollView
+  ScrollView,
+  Image
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { FontAwesome5 } from '@expo/vector-icons';
@@ -527,22 +528,26 @@ const PetsScreen = () => {
           <View style={styles.headerContent}>
             <View style={styles.logoSection}>
               <View style={styles.dashboardTitleRow}>
-                <Text style={styles.headerText}>Pet Management</Text>
-                <View style={styles.taglineBox}>
-                  <FontAwesome5 name="paw" size={12} color="#fff" style={styles.pawHeader} />
-                  <Text style={styles.taglineText}> Manage pet names and view activity</Text>
-                </View>
-                <View style={styles.headerData}>
+                <Text style={styles.headerText}>Your Pets</Text>
+                <Image 
+                  source={require('../../assets/Paw-Logo.png')} 
+                  style={styles.headerIcon}
+                />
+              </View>
+              <View style={styles.taglineBox}>
+                <FontAwesome5 name="paw" size={12} color="#fff" style={styles.pawHeader} />
+                <Text style={styles.taglineText}> Manage pet names and view activity</Text>
+              </View>
+              <View style={styles.headerData}>
                   <View style={[styles.statusBadge, styles.connected]}>
                     <View style={[styles.statusDot, styles.connectedDot]} />
                     <Text style={styles.statusText}>Online</Text>
                   </View>
                   <View style={styles.batteryIndicator}>
-                    <FontAwesome5 name={getBatteryIcon(batteryLevel)} size={16} color="#fff" style={styles.batteryIcon} />
+                    <FontAwesome5 name={getBatteryIcon(batteryLevel)} size={16} color="#ff9100" style={styles.batteryIcon} />
                     <Text style={styles.batteryText}>{batteryLevel ?? '--'}%</Text>
                   </View>
                 </View>
-              </View>
             </View>
           </View>
 
@@ -1012,12 +1017,19 @@ const styles = StyleSheet.create({
     height: 210,
   },
   logoSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
+    alignItems: 'stretch',
   },
   dashboardTitleRow: {
-    flexDirection: 'column',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginTop: 20,
+  },
+  headerIcon: {
+    width: 24,
+    height: 24,
+    marginLeft: 10,
   },
   headerText: {
     color: '#FFFFFF',
