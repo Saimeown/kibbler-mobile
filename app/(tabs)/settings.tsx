@@ -10,6 +10,9 @@ import {
   ActivityIndicator,
   ImageBackground,
   ScrollView,
+  Platform,
+  ActionSheetIOS,
+  Modal,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { useFonts } from 'expo-font';
@@ -41,10 +44,113 @@ const SettingsScreen = () => {
     confirm: false,
   });
 
+  // Modal states for iOS pickers
+  const [showPortionPicker, setShowPortionPicker] = useState(false);
+  const [showIntervalPicker, setShowIntervalPicker] = useState(false);
+  const [showWakePicker, setShowWakePicker] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
+  // Online/offline tracking based on battery data changes
+  const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
+  const [isDeviceOnline, setIsDeviceOnline] = useState(true);
+  const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
+  
+  // Configuration for offline detection (in milliseconds)
+  const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
+
   const router = useRouter();
+
+  // Picker options
+  const portionOptions = [
+    { label: '25%', value: '25' },
+    { label: '50%', value: '50' },
+    { label: '75%', value: '75' },
+    { label: '100%', value: '100' },
+  ];
+
+  const intervalOptions = [
+    { label: '1 hour', value: '1' },
+    { label: '2 hours', value: '2' },
+    { label: '4 hours', value: '4' },
+    { label: '6 hours', value: '6' },
+    { label: '8 hours', value: '8' },
+    { label: '12 hours', value: '12' },
+    { label: '24 hours', value: '24' },
+  ];
+
+  const wakeOptions = [
+    { label: '1 hour', value: '1' },
+    { label: '2 hours', value: '2' },
+    { label: '4 hours', value: '4' },
+    { label: '6 hours', value: '6' },
+    { label: '8 hours', value: '8' },
+    { label: '12 hours', value: '12' },
+  ];
+
+  // iOS picker handlers
+  const showPortionActionSheet = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', ...portionOptions.map(option => option.label)],
+          cancelButtonIndex: 0,
+          title: 'Select Portion Size',
+        },
+        (buttonIndex) => {
+          if (buttonIndex > 0) {
+            setPortionLevel(portionOptions[buttonIndex - 1].value);
+          }
+        }
+      );
+    } else {
+      setShowPortionPicker(true);
+    }
+  };
+
+  const showIntervalActionSheet = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', ...intervalOptions.map(option => option.label)],
+          cancelButtonIndex: 0,
+          title: 'Select Feeding Interval',
+        },
+        (buttonIndex) => {
+          if (buttonIndex > 0) {
+            setFeedingInterval(intervalOptions[buttonIndex - 1].value);
+          }
+        }
+      );
+    } else {
+      setShowIntervalPicker(true);
+    }
+  };
+
+  const showWakeActionSheet = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', ...wakeOptions.map(option => option.label)],
+          cancelButtonIndex: 0,
+          title: 'Select Wake Time',
+        },
+        (buttonIndex) => {
+          if (buttonIndex > 0) {
+            setAutoWakeHours(wakeOptions[buttonIndex - 1].value);
+          }
+        }
+      );
+    } else {
+      setShowWakePicker(true);
+    }
+  };
+
+  const getLabelForValue = (options: typeof portionOptions, value: string) => {
+    const option = options.find(opt => opt.value === value);
+    return option ? option.label : value;
+  };
 
   useEffect(() => {
     const deviceRef = ref(database, '/devices/kibbler_001/sleep_settings');
@@ -63,6 +169,57 @@ const SettingsScreen = () => {
       return () => clearTimeout(timer);
     }
   }, [toast]);
+
+  // Monitor device online status based on battery data updates
+  useEffect(() => {
+    const checkOnlineStatus = () => {
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastBatteryUpdate;
+      const isOnline = timeSinceLastUpdate < OFFLINE_TIMEOUT;
+      
+      console.log('Settings - Online status check:', {
+        timeSinceLastUpdate: Math.round(timeSinceLastUpdate / 1000) + 's',
+        isOnline,
+        threshold: OFFLINE_TIMEOUT / 1000 + 's'
+      });
+      
+      setIsDeviceOnline(isOnline);
+    };
+
+    // Check immediately and then every 10 seconds
+    checkOnlineStatus();
+    const interval = setInterval(checkOnlineStatus, 10000);
+
+    return () => clearInterval(interval);
+  }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
+
+  // Separate listener for battery level changes to track real-time updates
+  useEffect(() => {
+    const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
+    
+    const unsubscribeBattery = onValue(batteryRef, (snapshot) => {
+      const batteryLevel = snapshot.val();
+      if (batteryLevel !== null && batteryLevel !== undefined) {
+        const now = Date.now();
+        
+        // Only update if battery level actually changed
+        if (previousBatteryLevel !== null && batteryLevel !== previousBatteryLevel) {
+          console.log('Settings - Battery level changed:', {
+            previous: previousBatteryLevel,
+            current: batteryLevel,
+            timestamp: new Date(now).toLocaleTimeString()
+          });
+          setLastBatteryUpdate(now);
+        }
+        
+        setPreviousBatteryLevel(batteryLevel);
+      }
+    }, (error) => {
+      console.error('Settings - Battery listener error:', error);
+    });
+
+    return () => unsubscribeBattery();
+  }, [previousBatteryLevel]);
 
   const loadCurrentSettings = () => {
     const dbRef = ref(database, '/devices/kibbler_001');
@@ -234,7 +391,7 @@ const SettingsScreen = () => {
           <View style={styles.header}>
             <View style={styles.headerContent}>
               <Text style={styles.headerTitle}>
-                <Ionicons name="settings" size={18} color="#fff" /> Settings
+                 Settings
               </Text>
             </View>
           </View>
@@ -243,51 +400,70 @@ const SettingsScreen = () => {
             <Text style={styles.sectionTitle}>Device Settings</Text>
             <View style={styles.formGroup}>
               <Text style={styles.label}>Portion Size</Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={portionLevel}
-                  onValueChange={(value) => setPortionLevel(value)}
-                  style={styles.picker}
-                  itemStyle={styles.pickerItem}
-                >
-                  <Picker.Item label="25%" value="25" />
-                  <Picker.Item label="50%" value="50" />
-                  <Picker.Item label="75%" value="75" />
-                  <Picker.Item label="100%" value="100" />
-                </Picker>
-              </View>
+              {Platform.OS === 'ios' ? (
+                <TouchableOpacity style={styles.pickerButton} onPress={showPortionActionSheet}>
+                  <Text style={styles.pickerButtonText}>
+                    {getLabelForValue(portionOptions, portionLevel)}
+                  </Text>
+                  <Ionicons name="chevron-down" size={16} color="#fff" />
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={portionLevel}
+                    onValueChange={(value) => setPortionLevel(value)}
+                    style={styles.picker}
+                    itemStyle={styles.pickerItem}
+                  >
+                    {portionOptions.map((option) => (
+                      <Picker.Item key={option.value} label={option.label} value={option.value} />
+                    ))}
+                  </Picker>
+                </View>
+              )}
             </View>
             <View style={styles.formGroup}>
               <Text style={styles.label}>Feeding Interval</Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={feedingInterval}
-                  onValueChange={(value) => setFeedingInterval(value)}
-                  style={styles.picker}
-                  itemStyle={styles.pickerItem}
-                >
-                  <Picker.Item label="1 hour" value="1" />
-                  <Picker.Item label="2 hours" value="2" />
-                  <Picker.Item label="4 hours" value="4" />
-                  <Picker.Item label="6 hours" value="6" />
-                  <Picker.Item label="8 hours" value="8" />
-                  <Picker.Item label="12 hours" value="12" />
-                  <Picker.Item label="24 hours" value="24" />
-                </Picker>
-              </View>
+              {Platform.OS === 'ios' ? (
+                <TouchableOpacity style={styles.pickerButton} onPress={showIntervalActionSheet}>
+                  <Text style={styles.pickerButtonText}>
+                    {getLabelForValue(intervalOptions, feedingInterval)}
+                  </Text>
+                  <Ionicons name="chevron-down" size={16} color="#fff" />
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={feedingInterval}
+                    onValueChange={(value) => setFeedingInterval(value)}
+                    style={styles.picker}
+                    itemStyle={styles.pickerItem}
+                  >
+                    {intervalOptions.map((option) => (
+                      <Picker.Item key={option.value} label={option.label} value={option.value} />
+                    ))}
+                  </Picker>
+                </View>
+              )}
             </View>
             <View style={styles.formGroup}>
               <Text style={styles.label}>Device Sleep</Text>
               <TouchableOpacity
-                style={styles.sleepButton}
-                onPress={sendSleepCommand}
-                accessibilityLabel="Put device to sleep"
+                style={[styles.sleepButton, !isDeviceOnline && styles.disabledButton]}
+                onPress={isDeviceOnline ? sendSleepCommand : undefined}
+                disabled={!isDeviceOnline}
+                accessibilityLabel={isDeviceOnline ? "Put device to sleep" : "Device offline - sleep unavailable"}
               >
-                <Ionicons name="moon" size={16} color="#fff" />
-                <Text style={styles.sleepButtonText}>Put to Sleep Now</Text>
+                <Ionicons name="moon" size={16} color={isDeviceOnline ? "#fff" : "#666"} />
+                <Text style={[styles.sleepButtonText, !isDeviceOnline && styles.disabledButtonText]}>
+                  {isDeviceOnline ? "Sleep Now" : "Device Offline"}
+                </Text>
               </TouchableOpacity>
               <Text style={styles.sleepNote}>
-                Device will wake when pet approaches or button is pressed
+                {isDeviceOnline 
+                  ? "Put your Kibbler to sleep to conserve battery."
+                  : "Device must be online to send sleep command."
+                }
               </Text>
             </View>
             <View style={styles.formGroup}>
@@ -296,7 +472,7 @@ const SettingsScreen = () => {
                 <Switch
                   value={autoWakeEnabled}
                   onValueChange={(value) => setAutoWakeEnabled(value)}
-                  trackColor={{ false: '#767577', true: '#6a47c2ff' }}
+                  trackColor={{ false: '#767577', true: '#ff9100' }}
                   thumbColor={autoWakeEnabled ? '#fff' : '#f4f3f4'}
                   accessibilityLabel="Toggle auto wake"
                 />
@@ -304,21 +480,27 @@ const SettingsScreen = () => {
               {autoWakeEnabled && (
                 <View style={styles.formGroup}>
                   <Text style={styles.label}>Wake after</Text>
-                  <View style={styles.pickerContainer}>
-                    <Picker
-                      selectedValue={autoWakeHours}
-                      onValueChange={(value) => setAutoWakeHours(value)}
-                      style={styles.picker}
-                      itemStyle={styles.pickerItem}
-                    >
-                      <Picker.Item label="1 hour" value="1" />
-                      <Picker.Item label="2 hours" value="2" />
-                      <Picker.Item label="4 hours" value="4" />
-                      <Picker.Item label="6 hours" value="6" />
-                      <Picker.Item label="8 hours" value="8" />
-                      <Picker.Item label="12 hours" value="12" />
-                    </Picker>
-                  </View>
+                  {Platform.OS === 'ios' ? (
+                    <TouchableOpacity style={styles.pickerButton} onPress={showWakeActionSheet}>
+                      <Text style={styles.pickerButtonText}>
+                        {getLabelForValue(wakeOptions, autoWakeHours)}
+                      </Text>
+                      <Ionicons name="chevron-down" size={16} color="#fff" />
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.pickerContainer}>
+                      <Picker
+                        selectedValue={autoWakeHours}
+                        onValueChange={(value) => setAutoWakeHours(value)}
+                        style={styles.picker}
+                        itemStyle={styles.pickerItem}
+                      >
+                        {wakeOptions.map((option) => (
+                          <Picker.Item key={option.value} label={option.label} value={option.value} />
+                        ))}
+                      </Picker>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -328,14 +510,8 @@ const SettingsScreen = () => {
               disabled={isSavingSettings}
               accessibilityLabel="Save device settings"
             >
-              <Ionicons
-                name={isSavingSettings ? 'hourglass-outline' : 'checkmark'}
-                size={16}
-                color="#fff"
-                style={isSavingSettings ? styles.spinner : null}
-              />
               <Text style={styles.saveButtonText}>
-                {isSavingSettings ? 'Saving...' : 'Save All Settings'}
+                {isSavingSettings ? 'Saving...' : 'Save All'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -393,12 +569,7 @@ const SettingsScreen = () => {
               disabled={isSavingPasscode}
               accessibilityLabel="Save new passcode"
             >
-              <Ionicons
-                name={isSavingPasscode ? 'hourglass-outline' : 'checkmark'}
-                size={16}
-                color="#fff"
-                style={isSavingPasscode ? styles.spinner : null}
-              />
+
               <Text style={styles.saveButtonText}>{isSavingPasscode ? 'Updating...' : 'Save'}</Text>
             </TouchableOpacity>
           </View>
@@ -409,7 +580,7 @@ const SettingsScreen = () => {
               onPress={handleLogout}
               accessibilityLabel="Logout"
             >
-              <Ionicons name="log-out" size={16} color="#fff" />
+              <Ionicons name="log-out" size={16} color="#ff9100" />
               <Text style={styles.logoutButtonText}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -440,6 +611,82 @@ const SettingsScreen = () => {
             <Text style={styles.toastText}>{toast.message}</Text>
           </View>
         )}
+
+        {/* Android Modal Pickers */}
+        <Modal visible={showPortionPicker} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Portion Size</Text>
+                <TouchableOpacity onPress={() => setShowPortionPicker(false)}>
+                  <Ionicons name="close" size={24} color="#fff" />
+                </TouchableOpacity>
+              </View>
+              <Picker
+                selectedValue={portionLevel}
+                onValueChange={(value) => {
+                  setPortionLevel(value);
+                  setShowPortionPicker(false);
+                }}
+                style={styles.modalPicker}
+              >
+                {portionOptions.map((option) => (
+                  <Picker.Item key={option.value} label={option.label} value={option.value} />
+                ))}
+              </Picker>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={showIntervalPicker} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Feeding Interval</Text>
+                <TouchableOpacity onPress={() => setShowIntervalPicker(false)}>
+                  <Ionicons name="close" size={24} color="#fff" />
+                </TouchableOpacity>
+              </View>
+              <Picker
+                selectedValue={feedingInterval}
+                onValueChange={(value) => {
+                  setFeedingInterval(value);
+                  setShowIntervalPicker(false);
+                }}
+                style={styles.modalPicker}
+              >
+                {intervalOptions.map((option) => (
+                  <Picker.Item key={option.value} label={option.label} value={option.value} />
+                ))}
+              </Picker>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={showWakePicker} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Wake Time</Text>
+                <TouchableOpacity onPress={() => setShowWakePicker(false)}>
+                  <Ionicons name="close" size={24} color="#fff" />
+                </TouchableOpacity>
+              </View>
+              <Picker
+                selectedValue={autoWakeHours}
+                onValueChange={(value) => {
+                  setAutoWakeHours(value);
+                  setShowWakePicker(false);
+                }}
+                style={styles.modalPicker}
+              >
+                {wakeOptions.map((option) => (
+                  <Picker.Item key={option.value} label={option.label} value={option.value} />
+                ))}
+              </Picker>
+            </View>
+          </View>
+        </Modal>
       </ImageBackground>
     </View>
   );
@@ -461,7 +708,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    backgroundColor: 'rgba(18, 18, 18, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     paddingTop: StatusBar.currentHeight || 50,
     paddingBottom: 80,
   },
@@ -474,8 +721,6 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 20,
     paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(77, 82, 89, 0.7)',
   },
   headerContent: {
     flexDirection: 'row',
@@ -485,7 +730,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
-    fontSize: 18,
+    fontSize: 25,
   },
   closeButton: {
     padding: 10,
@@ -498,14 +743,12 @@ const styles = StyleSheet.create({
   section: {
     paddingHorizontal: 20,
     paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(77, 82, 89, 0.7)',
   },
   sectionTitle: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
-    fontSize: 16,
-    marginBottom: 10,
+    fontSize: 20,
+    marginBottom: 20,
   },
   formGroup: {
     marginBottom: 15,
@@ -530,6 +773,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#fff',
   },
+  pickerButton: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 50,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  pickerButtonText: {
+    color: '#fff',
+    fontFamily: 'Poppins',
+    fontSize: 14,
+    flex: 1,
+  },
   sleepButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -537,13 +797,20 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     paddingHorizontal: 25,
     paddingVertical: 10,
-    width: 205
+    width: '100%',
   },
   sleepButtonText: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
     fontSize: 14,
     marginLeft: 10,
+  },
+  disabledButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    opacity: 0.6,
+  },
+  disabledButtonText: {
+    color: '#666',
   },
   sleepNote: {
     color: '#a0a0a0',
@@ -555,12 +822,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 10,
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 8,
+    borderRadius: 50,
     paddingHorizontal: 10,
   },
   inputIcon: {
@@ -572,6 +840,8 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins',
     fontSize: 14,
     paddingVertical: 10,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
   },
   inputError: {
     borderColor: '#ff4747',
@@ -586,7 +856,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingVertical: 12,
     justifyContent: 'center',
-    width: 200,
+    width: '100%',
     alignSelf: 'center',
     marginBottom: 10
   },
@@ -597,7 +867,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
     fontSize: 14,
-    marginLeft: 10,
   },
   spinner: {
     transform: [{ rotate: '360deg' }],
@@ -605,16 +874,16 @@ const styles = StyleSheet.create({
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#c27006ff',
+    backgroundColor: '#000',
     borderRadius: 50,
     paddingHorizontal: 15,
     paddingVertical: 12,
     justifyContent: 'center',
-    width: 130,
+    width: '100%',
     alignSelf: 'center'
   },
   logoutButtonText: {
-    color: '#fff',
+    color: '#ff9100',
     fontFamily: 'Poppins-SemiBold',
     fontSize: 14,
     marginLeft: 10,
@@ -643,6 +912,34 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins',
     fontSize: 14,
     marginLeft: 10,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  modalTitle: {
+    color: '#fff',
+    fontFamily: 'Poppins-SemiBold',
+    fontSize: 18,
+  },
+  modalPicker: {
+    color: '#fff',
+    fontFamily: 'Poppins',
   },
 });
 

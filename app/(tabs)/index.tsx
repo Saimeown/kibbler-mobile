@@ -7,11 +7,11 @@ import {
     StatusBar,
     ImageBackground,
     ScrollView,
-    SectionList,
     TouchableOpacity,
     ActivityIndicator,
     Dimensions,
-    Image
+    Image,
+    FlatList
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { LineChart } from 'react-native-chart-kit';
@@ -77,6 +77,25 @@ const HomeScreen = () => {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [selectedPeriod, setSelectedPeriod] = useState('7days');
     const [activeTab, setActiveTab] = useState('Stats');
+    
+    // Online/offline tracking based on battery data changes
+    const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
+    const [isDeviceOnline, setIsDeviceOnline] = useState(true);
+    const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
+    
+    // Configuration for offline detection (in milliseconds)
+    const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
+    
+    // Force re-render every 10 seconds to update "time since last update" display
+    const [, forceUpdate] = useState({});
+    
+    useEffect(() => {
+        const interval = setInterval(() => {
+            forceUpdate({});
+        }, 10000);
+        return () => clearInterval(interval);
+    }, []);
+    
     const scrollViewRef = useRef<ScrollView>(null);
     const dropdownRef = useRef<View>(null);
     const isManualScrollRef = useRef(false);
@@ -146,6 +165,29 @@ const HomeScreen = () => {
     }, [activeTab, tabLayouts]);
     const [contentOffsets, setContentOffsets] = useState<{ [key: string]: number }>({});
 
+    // Monitor device online status based on battery data updates
+    useEffect(() => {
+        const checkOnlineStatus = () => {
+            const now = Date.now();
+            const timeSinceLastUpdate = now - lastBatteryUpdate;
+            const isOnline = timeSinceLastUpdate < OFFLINE_TIMEOUT;
+            
+            console.log('Online status check:', {
+                timeSinceLastUpdate: Math.round(timeSinceLastUpdate / 1000) + 's',
+                isOnline,
+                threshold: OFFLINE_TIMEOUT / 1000 + 's'
+            });
+            
+            setIsDeviceOnline(isOnline);
+        };
+
+        // Check immediately and then every 10 seconds
+        checkOnlineStatus();
+        const interval = setInterval(checkOnlineStatus, 10000);
+
+        return () => clearInterval(interval);
+    }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
+
     useEffect(() => {
         const dbRef = ref(database, '/devices/kibbler_001');
 
@@ -153,6 +195,16 @@ const HomeScreen = () => {
             const firebaseData = snapshot.val();
             if (firebaseData) {
                 console.log('Firebase data received:', JSON.stringify(firebaseData, null, 2)); 
+                
+                // Track battery level changes for online/offline detection
+                const currentBatteryLevel = firebaseData.device_status?.battery_level;
+                if (currentBatteryLevel !== undefined && currentBatteryLevel !== previousBatteryLevel) {
+                    const now = Date.now();
+                    setLastBatteryUpdate(now);
+                    setPreviousBatteryLevel(currentBatteryLevel);
+                    console.log('Battery level changed (main listener):', previousBatteryLevel, '->', currentBatteryLevel, 'at', new Date(now).toLocaleTimeString());
+                }
+                
                 const processedData = processDeviceData(firebaseData);
                 setData(processedData);
             }
@@ -164,6 +216,45 @@ const HomeScreen = () => {
 
         return () => unsubscribe();
     }, [selectedPeriod]);
+
+    // Separate listener for battery level changes to track real-time updates
+    useEffect(() => {
+        const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
+        
+        const unsubscribeBattery = onValue(batteryRef, (snapshot) => {
+            const batteryLevel = snapshot.val();
+            if (batteryLevel !== null && batteryLevel !== undefined) {
+                const now = Date.now();
+                if (batteryLevel !== previousBatteryLevel) {
+                    console.log('Battery level update detected (battery listener):', previousBatteryLevel, '->', batteryLevel, 'at', new Date(now).toLocaleTimeString());
+                    setLastBatteryUpdate(now);
+                    setPreviousBatteryLevel(batteryLevel);
+                }
+            }
+        }, (error) => {
+            console.error('Battery listener error:', error);
+        });
+
+        return () => unsubscribeBattery();
+    }, [previousBatteryLevel]);
+
+    // Re-process data when online status changes
+    useEffect(() => {
+        if (data) {
+            // Find the original Firebase data by reversing the process, or store it separately
+            // For now, we'll trigger a re-render by updating the data with new status
+            setData(prevData => {
+                if (!prevData) return prevData;
+                return {
+                    ...prevData,
+                    device_status: {
+                        ...prevData.device_status,
+                        status: isDeviceOnline ? 'online' : 'offline'
+                    }
+                };
+            });
+        }
+    }, [isDeviceOnline]);
 
     const handleTabPress = (tabName: string) => {
         setActiveTab(tabName);
@@ -236,7 +327,7 @@ const HomeScreen = () => {
     const processDeviceData = (firebaseData: any): DashboardData => {
         const deviceStatus = {
             ...firebaseData.device_status,
-            status: firebaseData.device_status?.status || 'offline',
+            status: isDeviceOnline ? 'online' : 'offline', // Use our tracked online status
             last_seen: firebaseData.device_status?.last_seen || new Date().toISOString(),
             battery_level: firebaseData.device_status?.battery_level || 0,
             container_level: firebaseData.device_status?.container_level || 0,
@@ -558,6 +649,30 @@ const HomeScreen = () => {
         return 'Unknown';
     };
 
+    const formatTimeSinceLastUpdate = (): string => {
+        const now = Date.now();
+        const timeSince = now - lastBatteryUpdate;
+        const seconds = Math.floor(timeSince / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+
+        if (hours > 0) {
+            return `${hours}h ${minutes % 60}m ago`;
+        } else if (minutes > 0) {
+            return `${minutes}m ago`;
+        } else {
+            return `${seconds}s ago`;
+        }
+    };
+
+    const getLastSeenValue = (): string => {
+        if (isDeviceOnline) {
+            return 'Now';
+        } else {
+            return formatTimeSinceLastUpdate();
+        }
+    };
+
     const renderStatsCards = () => {
         if (!data) return null;
 
@@ -664,12 +779,12 @@ const HomeScreen = () => {
                 <View style={styles.deviceMetrics}>
                     <View style={styles.metric}>
                         <View style={[styles.metricIcon, styles.mode]}>
-                            <FontAwesome5 name="paw" size={16} color="#fff" />
+                            <FontAwesome5 name="clock" size={16} color="#fff" />
                         </View>
                         <View style={styles.metricInfo}>
                             <View style={styles.metricRow}>
-                                <Text style={styles.metricLabel}>Power Source</Text>
-                                <Text style={styles.metricValue}>Solar Battery</Text>
+                                <Text style={styles.metricLabel}>Last Seen</Text>
+                                <Text style={styles.metricValue}>{getLastSeenValue()}</Text>
                             </View>
                         </View>
                     </View>
@@ -936,16 +1051,14 @@ const HomeScreen = () => {
         if (!data) return null;
 
         return (
-            <View>
-                <View style={[styles.panel, styles.stickyHeader]}>
-                    <View style={styles.panelHeader}>
-                        <View style={styles.panelTitleRow}>
-                            <FontAwesome5 name="clock" size={16} color="#ff9100" />
-                            <Text style={styles.panelTitle}>Recent Activity</Text>
-                        </View>
+            <View style={styles.panel}>
+                <View style={styles.panelHeader}>
+                    <View style={styles.panelTitleRow}>
+                        <FontAwesome5 name="clock" size={16} color="#ff9100" />
+                        <Text style={styles.panelTitle}>Recent Feeding Activity</Text>
                     </View>
                 </View>
-                <View style={styles.activityItemContainer}>
+                <View style={styles.activityMetrics}>
                     {data.recent_activities.map((item, index) => (
                         <View key={index} style={styles.metric}>
                             <View style={[styles.metricIcon, item.type === 'feeding' ? styles.feedingIcon : styles.resetIcon]}>
@@ -963,104 +1076,6 @@ const HomeScreen = () => {
                 </View>
             </View>
         );
-    };
-
-    // Prepare section data for SectionList
-    const prepareSectionData = () => {
-        if (!data) return [];
-        
-        return [
-            {
-                title: 'Stats',
-                key: 'stats',
-                data: [{ type: 'stats', content: renderStatsCards() }],
-            },
-            {
-                title: 'Device Status',
-                key: 'device-status',
-                data: [{ type: 'device-status', content: renderDeviceStatus() }],
-            },
-            {
-                title: 'Feeding Trend',
-                key: 'feeding-trend',
-                data: [{ type: 'feeding-trend', content: renderFeedingTrend() }],
-            },
-            {
-                title: 'Freshness Monitoring',
-                key: 'freshness-monitoring',
-                data: [{ type: 'freshness-monitoring', content: renderFreshnessMonitoring() }],
-            },
-            {
-                title: 'Recent Activity',
-                key: 'recent-activity',
-                data: [{ 
-                    type: 'activity-container', 
-                    key: 'activities',
-                    activities: data.recent_activities 
-                }],
-            },
-        ];
-    };
-
-    const renderSectionHeader = ({ section }: { section: any }) => {
-        if (section.key !== 'recent-activity') return null;
-        
-        return (
-            <View style={[styles.panel, styles.stickyHeader]}>
-                <View style={styles.panelHeader}>
-                    <View style={styles.panelTitleRow}>
-                        <FontAwesome5 name="clock" size={16} color="#ff9100" />
-                        <Text style={styles.panelTitle}>Recent Feeding Activity</Text>
-                    </View>
-                </View>
-            </View>
-        );
-    };
-
-    const renderSectionItem = ({ item, section }: { item: any; section: any }) => {
-        if (section.key === 'recent-activity' && item.type === 'activity-container') {
-            return (
-                <View style={styles.activityItemContainer} onLayout={handleLayout('Recent Activity')}>
-                    {item.activities.map((activityItem: any, index: number) => (
-                        <View key={index} style={styles.metric}>
-                            <View style={[styles.metricIcon, activityItem.type === 'feeding' ? styles.feedingIcon : styles.resetIcon]}>
-                                <FontAwesome5 name={activityItem.type === 'feeding' ? "paw" : "clock-rotate-left"} size={16} color="#fff" />
-                            </View>
-                            <View style={styles.metricInfo}>
-                                <Text style={styles.metricLabel}>
-                                    {activityItem.uid && <Text> </Text>}
-                                    {activityItem.message}
-                                </Text>
-                                <Text style={styles.activityTime}>{activityItem.time}</Text>
-                            </View>
-                        </View>
-                    ))}
-                </View>
-            );
-        } else {
-            // For other sections, just render the content with layout tracking
-            let tabName = '';
-            switch (section.key) {
-                case 'stats':
-                    tabName = 'Stats';
-                    break;
-                case 'device-status':
-                    tabName = 'Device Status';
-                    break;
-                case 'feeding-trend':
-                    tabName = 'Feeding Trend';
-                    break;
-                case 'freshness-monitoring':
-                    tabName = 'Freshness Monitoring';
-                    break;
-            }
-            
-            return (
-                <View onLayout={handleLayout(tabName)}>
-                    {item.content}
-                </View>
-            );
-        }
     };
 
     if (!fontsLoaded || loading) {
@@ -1123,6 +1138,7 @@ const HomeScreen = () => {
                                 showsHorizontalScrollIndicator={false}
                                 contentContainerStyle={styles.subtabsScrollContainer}
                                 style={styles.subtabsScrollView}
+                                indicatorStyle="white"
                                 onScroll={handleScroll}
                                 scrollEventThrottle={16}
                             >
@@ -1147,6 +1163,9 @@ const HomeScreen = () => {
                     <ScrollView
                         ref={scrollViewRef}
                         style={styles.scrollContainer}
+                        indicatorStyle="white"
+                        showsVerticalScrollIndicator={true}
+                        scrollIndicatorInsets={{ right: 1 }}
                         onScroll={(event) => {
                             // Don't update activeTab if user just manually tapped a subtab
                             if (isManualScrollRef.current) return;
@@ -1218,7 +1237,7 @@ const styles = StyleSheet.create({
     },
     contentContainer: {
         flex: 1,
-        backgroundColor: 'rgba(18, 18, 18, 0.7)',
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
     },
     loadingContainer: {
         flex: 1,
@@ -1228,8 +1247,8 @@ const styles = StyleSheet.create({
     },
     headerContent: {
         paddingHorizontal: 20,
-        paddingTop: StatusBar.currentHeight || 50,
-        height: 210
+        paddingTop: StatusBar.currentHeight || 40,
+        height: 190
     },
     logoSection: {
         flexDirection: 'column',
@@ -1534,7 +1553,7 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     timeLabel: {
-        color: '#a0a0a0',
+        color: '#fff',
         fontFamily: 'Poppins',
         fontSize: 12,
     },
@@ -1666,27 +1685,6 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontFamily: 'Poppins',
         fontSize: 14,
-    },
-    stickyHeader: {
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        marginBottom: 0,
-        paddingBottom: 0,
-        marginHorizontal: 15,
-        borderTopLeftRadius: 12,
-        borderTopRightRadius: 12,
-        borderBottomLeftRadius: 0,
-        borderBottomRightRadius: 0,
-    },
-    activityItemContainer: {
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        borderTopLeftRadius: 0,
-        borderTopRightRadius: 0,
-        borderBottomLeftRadius: 12,
-        borderBottomRightRadius: 12,
-        paddingLeft: 10,
-        paddingRight: 20,
-        marginHorizontal: 15,
-        marginBottom: 20,
     },
 });
 

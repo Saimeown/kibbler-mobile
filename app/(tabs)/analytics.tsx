@@ -9,7 +9,8 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
-  Image
+  Image,
+  TextInput
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { LineChart } from 'react-native-chart-kit';
@@ -34,6 +35,7 @@ interface Feeding {
 interface DeviceData {
   feeding_history?: { [key: string]: Feeding };
   history?: { daily?: any };
+  pet_registry?: { [key: string]: string };
   device_status?: {
     battery_level?: number;
   };
@@ -51,7 +53,7 @@ interface AnalyticsData {
   unique_pets: { [uid: string]: string };
   feeding_history: { [key: string]: Feeding };
   daily_history: any;
-  device_status: { battery_level?: number } | null;
+  device_status: { battery_level?: number; status?: string } | null;
   error?: string;
 }
 
@@ -66,6 +68,16 @@ const AnalyticsScreen = () => {
   const [loading, setLoading] = useState(true);
   const [activeSubtab, setActiveSubtab] = useState('Feeding Patterns');
   const [contentOffsets, setContentOffsets] = useState<{ [key: string]: number }>({});
+  const [searchTerm, setSearchTerm] = useState('');
+  const [petSearchTerm, setPetSearchTerm] = useState('');
+  
+  // Online/offline tracking based on battery data changes
+  const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
+  const [isDeviceOnline, setIsDeviceOnline] = useState(true);
+  const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
+  
+  // Configuration for offline detection (in milliseconds)
+  const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
   const scrollViewRef = useRef<ScrollView>(null);
   const isManualScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -122,6 +134,29 @@ const AnalyticsScreen = () => {
     }
   }, [activeSubtab, tabLayouts]);
 
+  // Monitor device online status based on battery data updates
+  useEffect(() => {
+    const checkOnlineStatus = () => {
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastBatteryUpdate;
+      const isOnline = timeSinceLastUpdate < OFFLINE_TIMEOUT;
+      
+      console.log('Analytics - Online status check:', {
+        timeSinceLastUpdate: Math.round(timeSinceLastUpdate / 1000) + 's',
+        isOnline,
+        threshold: OFFLINE_TIMEOUT / 1000 + 's'
+      });
+      
+      setIsDeviceOnline(isOnline);
+    };
+
+    // Check immediately and then every 10 seconds
+    checkOnlineStatus();
+    const interval = setInterval(checkOnlineStatus, 10000);
+
+    return () => clearInterval(interval);
+  }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
+
   useEffect(() => {
     const dbRef = ref(database, '/devices/kibbler_001');
 
@@ -143,14 +178,54 @@ const AnalyticsScreen = () => {
     return () => unsubscribe();
   }, []);
 
+  // Separate listener for battery level changes to track real-time updates
+  useEffect(() => {
+    const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
+    
+    const unsubscribeBattery = onValue(batteryRef, (snapshot) => {
+      const batteryLevel = snapshot.val();
+      if (batteryLevel !== null && batteryLevel !== undefined) {
+        const now = Date.now();
+        
+        // Only update if battery level actually changed
+        if (previousBatteryLevel !== null && batteryLevel !== previousBatteryLevel) {
+          console.log('Analytics - Battery level changed:', {
+            previous: previousBatteryLevel,
+            current: batteryLevel,
+            timestamp: new Date(now).toLocaleTimeString()
+          });
+          setLastBatteryUpdate(now);
+        }
+        
+        setPreviousBatteryLevel(batteryLevel);
+      }
+    }, (error) => {
+      console.error('Analytics - Battery listener error:', error);
+    });
+
+    return () => unsubscribeBattery();
+  }, [previousBatteryLevel]);
+
   const processAnalyticsData = (deviceData: DeviceData): AnalyticsData => {
     const feedingHistory = deviceData.feeding_history || {};
     const dailyHistory = deviceData.history?.daily || {};
+    const petRegistry = deviceData.pet_registry || {};
 
     const uniquePets: { [uid: string]: string } = {};
+    
+    // First, add pets from pet_registry (all detected pets)
+    Object.entries(petRegistry).forEach(([uid, name]) => {
+      uniquePets[uid] = name as string;
+    });
+    
+    // Then, add/update pets from feedingHistory (this captures all pets with feeding activity)
     Object.values(feedingHistory).forEach((feeding: Feeding) => {
       if (feeding.uid) {
-        uniquePets[feeding.uid] = feeding.pet_name || 'Unknown';
+        const uid = feeding.uid.toString();
+        const petName = petRegistry[uid] || feeding.pet_name || 'Unknown';
+        
+        // Add this pet even if not in registry (same logic as pets.tsx)
+        uniquePets[uid] = petName;
       }
     });
 
@@ -313,7 +388,10 @@ const AnalyticsScreen = () => {
       unique_pets: uniquePets,
       feeding_history: feedingHistory,
       daily_history: dailyHistory,
-      device_status: deviceData.device_status || null
+      device_status: { 
+        ...deviceData.device_status, 
+        status: isDeviceOnline ? 'online' : 'offline' // Use our tracked online status
+      }
     };
   };
 
@@ -461,9 +539,16 @@ const AnalyticsScreen = () => {
                 <Text style={styles.taglineText}> Detailed feeding insights and patterns</Text>
               </View>
               <View style={styles.headerData}>
-                  <View style={[styles.statusBadge, styles.connected]}>
-                    <View style={[styles.statusDot, styles.connectedDot]} />
-                    <Text style={styles.statusText}>Online</Text>
+                  <View style={[styles.statusBadge, data?.device_status?.status === 'online' ? styles.connected : styles.disconnected]}>
+                    <View style={[
+                      styles.statusDot,
+                      data?.device_status?.status === 'online' ? styles.connectedDot : styles.disconnectedDot
+                    ]} />
+                    <Text style={styles.statusText}>
+                      {data?.device_status?.status
+                        ? data.device_status.status.charAt(0).toUpperCase() + data.device_status.status.slice(1)
+                        : 'Unknown'}
+                    </Text>
                   </View>
                   <View style={styles.batteryIndicator}>
                     <FontAwesome5 name={getBatteryIcon(data?.device_status?.battery_level)} size={16} color="#ff9100" style={styles.batteryIcon} />
@@ -483,6 +568,7 @@ const AnalyticsScreen = () => {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.subtabsScrollContainer}
                 style={styles.subtabsScrollView}
+                indicatorStyle="white"
                 onScroll={handleScroll}
                 scrollEventThrottle={16}
               >
@@ -507,6 +593,9 @@ const AnalyticsScreen = () => {
           <ScrollView
             ref={scrollViewRef}
             style={styles.scrollContainer}
+            indicatorStyle="white"
+            showsVerticalScrollIndicator={true}
+            scrollIndicatorInsets={{ right: 1 }}
             onScroll={(event) => {
               // Don't update activeSubtab if user just manually tapped a subtab
               if (isManualScrollRef.current) return;
@@ -543,19 +632,24 @@ const AnalyticsScreen = () => {
               <View style={styles.panel}>
                 <View style={styles.panelHeader}>
                   <Text style={styles.panelTitle}>
-                    <FontAwesome5 name="clock" size={16} color="#fff" /> Peak Feeding Hours
+                    Peak Feeding Hours
                   </Text>
                 </View>
 
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={true}
+                  indicatorStyle="white"
                   style={styles.chartScrollContainer}
                 >
                   <View style={styles.chartContainer}>
                     <LineChart
                       data={{
-                        labels: Array.from({ length: 24 }, (_, i) => `${i}:00`),
+                        labels: Array.from({ length: 24 }, (_, i) => {
+                          const hour = i === 0 ? 12 : i > 12 ? i - 12 : i;
+                          const period = i < 12 ? 'AM' : 'PM';
+                          return `${hour}${period}`;
+                        }),
                         datasets: [{ data: hourlyData }]
                       }}
                       width={Dimensions.get('window').width * 3}
@@ -564,7 +658,7 @@ const AnalyticsScreen = () => {
                         backgroundGradientFromOpacity: 0,
                         backgroundGradientToOpacity: 0,
                         decimalPlaces: 0,
-                        color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                        color: (opacity = 1) => `rgba(255, 145, 0, ${opacity})`,
                         labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
                         style: {
                           borderRadius: 16,
@@ -572,7 +666,7 @@ const AnalyticsScreen = () => {
                         propsForDots: {
                           r: "6",
                           strokeWidth: "2",
-                          stroke: "#ffffff"
+                          stroke: "#ff9100"
                         }
                       }}
                       bezier
@@ -581,6 +675,11 @@ const AnalyticsScreen = () => {
                         borderRadius: 16,
                         paddingRight: 20
                       }}
+                      withVerticalLabels={true}
+                      withHorizontalLabels={true}
+                      yAxisLabel=""
+                      yAxisSuffix=""
+                      fromZero={true}
                     />
                   </View>
                 </ScrollView>
@@ -588,33 +687,53 @@ const AnalyticsScreen = () => {
                 <View style={styles.timeRangesGrid}>
                   <View style={styles.timeRangeRow}>
                     <View style={styles.timeRangeItem}>
-                      <Text style={styles.timeRangeLabel}>12AM - 6AM</Text>
-                      <Text style={styles.timeRangeValue}>
-                        {rangeCounts['12AM - 6AM']} ({totalFeedings > 0 ? Math.round((rangeCounts['12AM - 6AM'] / totalFeedings) * 100) : 0}%)
-                      </Text>
+                      <View style={styles.timeRangeHeader}>
+                        <Text style={styles.timeRangeLabel}>12AM - 6AM</Text>
+                      </View>
+                      <View style={styles.timeRangeValueContainer}>
+                        <Text style={styles.timeRangeCount}>{rangeCounts['12AM - 6AM']}</Text>
+                        <Text style={styles.timeRangePercentage}>
+                          {totalFeedings > 0 ? Math.round((rangeCounts['12AM - 6AM'] / totalFeedings) * 100) : 0}%
+                        </Text>
+                      </View>
                     </View>
 
                     <View style={styles.timeRangeItem}>
-                      <Text style={styles.timeRangeLabel}>6AM - 12PM</Text>
-                      <Text style={styles.timeRangeValue}>
-                        {rangeCounts['6AM - 12PM']} ({totalFeedings > 0 ? Math.round((rangeCounts['6AM - 12PM'] / totalFeedings) * 100) : 0}%)
-                      </Text>
+                      <View style={styles.timeRangeHeader}>
+                        <Text style={styles.timeRangeLabel}>6AM - 12PM</Text>
+                      </View>
+                      <View style={styles.timeRangeValueContainer}>
+                        <Text style={styles.timeRangeCount}>{rangeCounts['6AM - 12PM']}</Text>
+                        <Text style={styles.timeRangePercentage}>
+                          {totalFeedings > 0 ? Math.round((rangeCounts['6AM - 12PM'] / totalFeedings) * 100) : 0}%
+                        </Text>
+                      </View>
                     </View>
                   </View>
 
                   <View style={styles.timeRangeRow}>
                     <View style={styles.timeRangeItem}>
-                      <Text style={styles.timeRangeLabel}>12PM - 6PM</Text>
-                      <Text style={styles.timeRangeValue}>
-                        {rangeCounts['12PM - 6PM']} ({totalFeedings > 0 ? Math.round((rangeCounts['12PM - 6PM'] / totalFeedings) * 100) : 0}%)
-                      </Text>
+                      <View style={styles.timeRangeHeader}>
+                        <Text style={styles.timeRangeLabel}>12PM - 6PM</Text>
+                      </View>
+                      <View style={styles.timeRangeValueContainer}>
+                        <Text style={styles.timeRangeCount}>{rangeCounts['12PM - 6PM']}</Text>
+                        <Text style={styles.timeRangePercentage}>
+                          {totalFeedings > 0 ? Math.round((rangeCounts['12PM - 6PM'] / totalFeedings) * 100) : 0}%
+                        </Text>
+                      </View>
                     </View>
 
                     <View style={styles.timeRangeItem}>
-                      <Text style={styles.timeRangeLabel}>6PM - 12AM</Text>
-                      <Text style={styles.timeRangeValue}>
-                        {rangeCounts['6PM - 12AM']} ({totalFeedings > 0 ? Math.round((rangeCounts['6PM - 12AM'] / totalFeedings) * 100) : 0}%)
-                      </Text>
+                      <View style={styles.timeRangeHeader}>
+                        <Text style={styles.timeRangeLabel}>6PM - 12AM</Text>
+                      </View>
+                      <View style={styles.timeRangeValueContainer}>
+                        <Text style={styles.timeRangeCount}>{rangeCounts['6PM - 12AM']}</Text>
+                        <Text style={styles.timeRangePercentage}>
+                          {totalFeedings > 0 ? Math.round((rangeCounts['6PM - 12AM'] / totalFeedings) * 100) : 0}%
+                        </Text>
+                      </View>
                     </View>
                   </View>
                 </View>
@@ -622,7 +741,7 @@ const AnalyticsScreen = () => {
 
 
                 <Text style={styles.peakHoursFooter}>
-                  <Text style={styles.bold}>Peak hours: </Text>
+                  <Text style={styles.bold}>Peak hour: </Text>
                   {data?.peak_hours.map(h => new Date(0, 0, 0, h).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })).join(', ')}
                 </Text>
               </View>
@@ -631,111 +750,130 @@ const AnalyticsScreen = () => {
             <View onLayout={handleLayout('Historical Data')}>
               <View style={styles.panel}>
                 <View style={styles.panelHeader}>
-                  <Text style={styles.panelTitle}>
-                    <FontAwesome5 name="calendar-week" size={16} color="#fff" /> Visits This Week
-                  </Text>
+                  <View style={styles.panelTitleRow}>
+                    <Text style={styles.panelTitle}>
+                       Visits Past Week
+                    </Text>
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Search pets..."
+                      placeholderTextColor="#999"
+                      value={searchTerm}
+                      onChangeText={setSearchTerm}
+                    />
+                  </View>
                 </View>
-                <Text style={styles.panelSubtitle}>Daily feeding counts for each pet</Text>
+                <Text style={styles.panelSubtitle}>7-day feeding counts per pet</Text>
                 <ScrollView
                   style={styles.scrollableActivities}
                   nestedScrollEnabled={true}
                   horizontal={true}
+                  indicatorStyle="white"
                 >
                   <View>
                     <View style={styles.tableHeader}>
-                      <Text style={[styles.tableHeaderCell, styles.stickyHeader]}>Pet</Text>
+                      <Text style={[styles.tableHeaderCell, styles.stickyHeader, styles.petNameCell]}>Pet</Text>
+                      <Text style={[styles.tableHeaderCell, styles.stickyHeader, styles.centeredCell]}>Total</Text>
                       {dates.map(date => (
-                        <Text key={date} style={[styles.tableHeaderCell, styles.stickyHeader]}>
+                        <Text key={date} style={[styles.tableHeaderCell, styles.stickyHeader, styles.centeredCell]}>
                           {new Date(date).toLocaleDateString('en-US', { weekday: 'short' })}
                         </Text>
                       ))}
-                      <Text style={[styles.tableHeaderCell, styles.stickyHeader]}>Total</Text>
                     </View>
-                    {Object.entries(data?.unique_pets || {}).map(([uid, name]) => {
-                      let total = 0;
-                      return (
-                        <View key={uid} style={styles.tableRow}>
-                          <Text style={styles.tableCell}>{name}</Text>
+                    <ScrollView
+                      style={styles.verticalTableScroll}
+                      nestedScrollEnabled={true}
+                      showsVerticalScrollIndicator={true}
+                      indicatorStyle="white"
+                    >
+                      {Object.entries(data?.unique_pets || {})
+                        .filter(([uid, name]) => 
+                          name.toLowerCase().includes(searchTerm.toLowerCase())
+                        )
+                        .map(([uid, name]) => {
+                          const total = dates.reduce((sum, date) => {
+                            return sum + (data?.visits_per_pet_per_day[date]?.[uid]?.count || 0);
+                          }, 0);
+                          return { uid, name, total };
+                        })
+                        .sort((a, b) => b.total - a.total)
+                        .map(({ uid, name, total }) => {
+                        return (
+                          <View key={uid} style={styles.tableRow}>
+                          <Text style={[styles.tableCell, styles.petNameCell]}>{name}</Text>
+                          <Text style={[styles.tableCell, styles.centeredCell, styles.bold]}>{total}</Text>
                           {dates.map(date => {
                             const count = data?.visits_per_pet_per_day[date]?.[uid]?.count || 0;
-                            total += count;
                             return (
                               <Text
                                 key={date}
-                                style={[styles.tableCell, count > 0 ? styles.highlightCell : null]}
+                                style={[styles.tableCell, styles.centeredCell, count > 0 ? styles.highlightCell : null]}
                               >
                                 {count}
                               </Text>
                             );
                           })}
-                          <Text style={[styles.tableCell, styles.bold]}>{total}</Text>
                         </View>
                       );
                     })}
+                    </ScrollView>
                   </View>
                 </ScrollView>
               </View>
             </View>
 
             <View onLayout={handleLayout('Overview')}>
-              <View style={styles.panel}>
-                <View style={styles.panelHeader}>
-                  <Text style={styles.panelTitle}>
-                    <FontAwesome5 name="chart-bar" size={16} color="#fff" /> Overview
-                  </Text>
+              <View style={styles.statsGrid}>
+                <View style={styles.statCard}>
+                  <View style={styles.statHeader}>
+                    <FontAwesome5 name="calendar" style={[styles.statIcon, styles.yellow]} />
+                    <FontAwesome5
+                      name="chart-line"
+                      style={[styles.statTrend, data?.visit_rate_change && data.visit_rate_change >= 0 ? styles.yellow : styles.yellow]}
+                    />
+                  </View>
+                  <View style={styles.statContent}>
+                    <Text style={styles.statLabel}>Visit Rate Change</Text>
+                    <Text style={styles.statValue}>{data?.visit_rate_change ? Math.abs(data.visit_rate_change) : 0}%</Text>
+                    <Text style={[styles.statChange, data?.visit_rate_change && data.visit_rate_change >= 0 ? styles.yellow : styles.gold]}>
+                      {data?.visit_rate_change && data.visit_rate_change >= 0 ? 'Up' : 'Down'} from last week
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.statsGrid}>
-                  <View style={styles.statCard}>
-                    <View style={styles.statHeader}>
-                      <FontAwesome5 name="calendar" style={[styles.statIcon, styles.green]} />
-                      <FontAwesome5
-                        name="chart-line"
-                        style={[styles.statTrend, data?.visit_rate_change && data.visit_rate_change >= 0 ? styles.green : styles.red]}
-                      />
-                    </View>
-                    <View style={styles.statContent}>
-                      <Text style={styles.statLabel}>Visit Rate Change</Text>
-                      <Text style={styles.statValue}>{data?.visit_rate_change ? Math.abs(data.visit_rate_change) : 0}%</Text>
-                      <Text style={[styles.statChange, data?.visit_rate_change && data.visit_rate_change >= 0 ? styles.positive : styles.negative]}>
-                        {data?.visit_rate_change && data.visit_rate_change >= 0 ? 'Up' : 'Down'} from last week
-                      </Text>
-                    </View>
-                  </View>
 
-                  <View style={styles.statCard}>
-                    <View style={styles.statHeader}>
-                      <FontAwesome5 name="dog" style={[styles.statIcon, styles.blue]} />
-                      <FontAwesome5 name="crown" style={[styles.statTrend, styles.yellow]} />
-                    </View>
-                    <View style={styles.statContent}>
-                      <Text style={styles.statLabel}>Most Frequent Visitor</Text>
-                      <Text style={styles.statValue}>{data?.most_frequent_visitor?.name || '--'}</Text>
-                      <Text style={styles.statChange}>{data?.most_frequent_visitor?.count || 0} visits</Text>
-                    </View>
+                <View style={styles.statCard}>
+                  <View style={styles.statHeader}>
+                    <FontAwesome5 name="dog" style={[styles.statIcon, styles.yellow]} />
+                    <FontAwesome5 name="crown" style={[styles.statTrend, styles.yellow]} />
                   </View>
-
-                  <View style={styles.statCard}>
-                    <View style={styles.statHeader}>
-                      <FontAwesome5 name="clock" style={[styles.statIcon, styles.purple]} />
-                      <FontAwesome5 name="bed" style={[styles.statTrend, styles.red]} />
-                    </View>
-                    <View style={styles.statContent}>
-                      <Text style={styles.statLabel}>Most Inactive Pet</Text>
-                      <Text style={styles.statValue}>{data?.most_inactive_pet?.name || '--'}</Text>
-                      <Text style={[styles.statChange, styles.negative]}>{data?.most_inactive_pet?.hours || 0}h inactive</Text>
-                    </View>
+                  <View style={styles.statContent}>
+                    <Text style={styles.statLabel}>Most Frequent Visitor</Text>
+                    <Text style={styles.statValue}>{data?.most_frequent_visitor?.name || '--'}</Text>
+                    <Text style={[styles.statChange, styles.gold]}>{data?.most_frequent_visitor?.count || 0} visits</Text>
                   </View>
+                </View>
 
-                  <View style={styles.statCard}>
-                    <View style={styles.statHeader}>
-                      <FontAwesome5 name="tag" style={[styles.statIcon, styles.yellow]} />
-                      <FontAwesome5 name="plus" style={[styles.statTrend, styles.green]} />
-                    </View>
-                    <View style={styles.statContent}>
-                      <Text style={styles.statLabel}>New Tags This Week</Text>
-                      <Text style={styles.statValue}>{Object.keys(data?.new_tags_this_week || {}).length}</Text>
-                      <Text style={[styles.statChange, styles.positive]}>New pets detected</Text>
-                    </View>
+                <View style={styles.statCard}>
+                  <View style={styles.statHeader}>
+                    <FontAwesome5 name="clock" style={[styles.statIcon, styles.yellow]} />
+                    <FontAwesome5 name="bed" style={[styles.statTrend, styles.yellow]} />
+                  </View>
+                  <View style={styles.statContent}>
+                    <Text style={styles.statLabel}>Most Inactive Pet</Text>
+                    <Text style={styles.statValue}>{data?.most_inactive_pet?.name || '--'}</Text>
+                    <Text style={[styles.statChange, styles.negative]}>{data?.most_inactive_pet?.hours || 0}h inactive</Text>
+                  </View>
+                </View>
+
+                <View style={styles.statCard}>
+                  <View style={styles.statHeader}>
+                    <FontAwesome5 name="tag" style={[styles.statIcon, styles.yellow]} />
+                    <FontAwesome5 name="plus" style={[styles.statTrend, styles.yellow]} />
+                  </View>
+                  <View style={styles.statContent}>
+                    <Text style={styles.statLabel}>New Tags This Week</Text>
+                    <Text style={styles.statValue}>{Object.keys(data?.new_tags_this_week || {}).length}</Text>
+                    <Text style={[styles.statChange, styles.gold]}>New pets detected</Text>
                   </View>
                 </View>
               </View>
@@ -744,23 +882,44 @@ const AnalyticsScreen = () => {
             <View onLayout={handleLayout('Pet Insights')}>
               <View style={styles.panel}>
                 <View style={styles.panelHeader}>
-                  <Text style={styles.panelTitle}>
-                    <FontAwesome5 name="paw" size={16} color="#fff" /> Pet Insights
-                  </Text>
+                  <View style={styles.panelTitleRow}>
+                    <Text style={styles.panelTitle}>
+                       Last Seen
+                    </Text>
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Search pets..."
+                      placeholderTextColor="#999"
+                      value={petSearchTerm}
+                      onChangeText={setPetSearchTerm}
+                    />
+                  </View>
                 </View>
-                <Text style={styles.panelSubtitle}>Most recent feeding time for each pet</Text>
+                <Text style={styles.panelSubtitle}>Most Recent Visit Time per Pet</Text>
                 <ScrollView
                   style={styles.scrollableActivities}
                   nestedScrollEnabled={true}
+                  indicatorStyle="white"
                 >
-                  {Object.values(data?.last_visit_times || {}).map((pet, index) => (
-                    <View key={index} style={styles.activityItem}>
+                  {Object.values(data?.last_visit_times || {})
+                    .filter((pet) => 
+                      pet.name.toLowerCase().includes(petSearchTerm.toLowerCase())
+                    )
+                    .sort((a, b) => {
+                      // Sort by timestamp descending, but put "Never" at the end
+                      if (a.time === 'Never' && b.time === 'Never') return 0;
+                      if (a.time === 'Never') return 1;
+                      if (b.time === 'Never') return -1;
+                      return b.timestamp - a.timestamp;
+                    })
+                    .map((pet, index) => (
+                    <View key={index} style={styles.lastSeenItem}>
                       <View style={[styles.activityIcon, styles.feedingIcon]}>
                         <FontAwesome5 name="paw" size={16} color="#fff" />
                       </View>
-                      <View style={styles.activityContent}>
+                      <View style={styles.lastSeenContent}>
                         <Text style={styles.activityMessage}>{pet.name}</Text>
-                        <Text style={styles.activityTime}>{pet.time}</Text>
+                        <Text style={styles.lastSeenTime}>{pet.time}</Text>
                       </View>
                     </View>
                   ))}
@@ -810,8 +969,8 @@ const styles = StyleSheet.create({
   },
   headerContent: {
     paddingHorizontal: 20,
-    paddingTop: StatusBar.currentHeight || 50,
-    height: 210
+    paddingTop: StatusBar.currentHeight || 40,
+    height: 190
   },
   logoSection: {
     flexDirection: 'column',
@@ -824,8 +983,8 @@ const styles = StyleSheet.create({
     marginTop: 20
   },
   headerIcon: {
-    width: 24,
-    height: 24,
+    width: 30,
+    height: 30,
     marginLeft: 10,
   },
   headerText: {
@@ -863,6 +1022,9 @@ const styles = StyleSheet.create({
   connected: {
     backgroundColor: 'rgba(195, 195, 195, 0.2)',
   },
+  disconnected: {
+    backgroundColor: 'rgba(195, 195, 195, 0.2)',
+  },
   statusDot: {
     width: 8,
     height: 8,
@@ -871,6 +1033,9 @@ const styles = StyleSheet.create({
   },
   connectedDot: {
     backgroundColor: '#00C853',
+  },
+  disconnectedDot: {
+    backgroundColor: '#1a1a1aff',
   },
   statusText: {
     color: '#fff',
@@ -951,7 +1116,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'space-between',
     paddingHorizontal: 15,
-    marginBottom: 20,
+    marginBottom: 8,
   },
   statCard: {
     width: '48%',
@@ -976,6 +1141,9 @@ const styles = StyleSheet.create({
   },
   yellow: {
     color: '#FFC107',
+  },
+  gold: {
+    color: '#ff9100',
   },
   blue: {
     color: '#2196F3',
@@ -1007,12 +1175,12 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
   },
   negative: {
-    color: '#FF4747',
+    color: '#ff9100',
   },
   panel: {
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     borderRadius: 12,
-    padding: 15,
+    padding: 25,
     marginHorizontal: 15,
     marginBottom: 20,
   },
@@ -1020,12 +1188,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 10,
   },
   panelTitle: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
     fontSize: 16,
+    marginLeft: 0,
+  },
+  panelTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flex: 1,
+  },
+  searchInput: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(255, 255, 255, 0.83)',
+    borderWidth: 1,
+    borderRadius: 50,
+    color: '#fff',
+    fontFamily: 'Poppins',
+    fontSize: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 0,
+    minWidth: 150,
+    maxWidth: 200,
+    height: 35,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
+    lineHeight: 35,
+    paddingBottom: 15,
   },
   panelSubtitle: {
     color: '#a0a0a0',
@@ -1068,14 +1261,14 @@ const styles = StyleSheet.create({
   chartContainer: {
     alignItems: 'center',
     backgroundColor: 'transparent',
-    paddingRight: 20,
+    marginRight: 35,
   },
   chartScrollContainer: {
     width: '100%',
     marginBottom: 10,
   },
   peakHoursFooter: {
-    color: '#a0a0a0',
+    color: '#d4d4d4ff',
     fontFamily: 'Poppins',
     fontSize: 12,
     marginTop: 10,
@@ -1086,12 +1279,36 @@ const styles = StyleSheet.create({
   scrollableActivities: {
     maxHeight: 300,
   },
+  verticalTableScroll: {
+    maxHeight: 250,
+  },
   activityItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#2d2d2d',
+  },
+  lastSeenItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2d2d2d',
+  },
+  lastSeenContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginLeft: 10,
+  },
+  lastSeenTime: {
+    color: '#a0a0a0',
+    fontFamily: 'Poppins',
+    fontSize: 12,
+    textAlign: 'right',
   },
   activityIcon: {
     width: 32,
@@ -1136,7 +1353,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
   },
   stickyHeader: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
   tableRow: {
     flexDirection: 'row',
@@ -1145,13 +1361,41 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
   tableCell: {
-    flex: 1,
     color: '#e8e8e8',
     fontFamily: 'Poppins',
     fontSize: 12,
     textAlign: 'center',
-    minWidth: 60,
+    width: 60,
     paddingHorizontal: 5,
+  },
+  centeredCell: {
+    textAlign: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+    textAlignVertical: 'center',
+  },
+  petNameCell: {
+    textAlign: 'left',
+    paddingLeft: 5,
+    width: 100,
+  },
+  petColumnHeader: {
+    backgroundColor: '#0d0d0d',
+    textAlign: 'left',
+    paddingLeft: 10,
+  },
+  totalColumnHeader: {
+    backgroundColor: '#0d0d0d',
+    textAlign: 'center',
+  },
+  petColumnCell: {
+    backgroundColor: '#0d0d0d',
+    textAlign: 'left',
+    paddingLeft: 10,
+  },
+  totalColumnCell: {
+    backgroundColor: '#0d0d0d',
+    textAlign: 'center',
   },
   highlightCell: {
     backgroundColor: 'rgba(221, 44, 0, 0.2)',
@@ -1166,20 +1410,44 @@ const styles = StyleSheet.create({
   },
   timeRangeItem: {
     width: '48%',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 8,
-    padding: 12,
+    overflow: 'hidden',
+  },
+  timeRangeHeader: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
   },
   timeRangeLabel: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
     fontSize: 14,
-    marginBottom: 4,
+    textAlign: 'center',
   },
   timeRangeValue: {
     color: '#fff',
     fontFamily: 'Poppins',
     fontSize: 16,
+  },
+  timeRangeValueContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  timeRangeCount: {
+    color: '#ff9100',
+    fontFamily: 'Poppins-Bold',
+    fontSize: 20,
+  },
+  timeRangePercentage: {
+    color: '#bababaff',
+    fontFamily: 'Poppins-Medium',
+    fontSize: 14,
   },
 });
 

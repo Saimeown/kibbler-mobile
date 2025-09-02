@@ -171,7 +171,15 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
     });
   };
 
+  // Check if all notifications are read
+  const allNotificationsRead = notifications.length > 0 && notifications.every(notification => notification.read);
+
   const markAllNotificationsRead = () => {
+    // Don't proceed if all notifications are already read or there are no notifications
+    if (allNotificationsRead || notifications.length === 0) {
+      return;
+    }
+
     const dbRef = ref(database, '/devices/kibbler_001/notifications/read_status');
     const updates: { [key: string]: boolean } = {};
     notifications.forEach((notification) => {
@@ -179,6 +187,12 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
         updates[notification.id] = true;
       }
     });
+
+    // If no updates needed, return early
+    if (Object.keys(updates).length === 0) {
+      return;
+    }
+
     update(dbRef, updates).then(() => {
       setNotifications((prev) =>
         prev.map((n) => (updates[n.id] ? { ...n, read: true } : n))
@@ -214,12 +228,16 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
           <View style={styles.header}>
             <View style={styles.headerContent}>
               <Text style={styles.headerTitle}>
-                <FontAwesome5 name="bell" size={18} color="#fff" /> Notifications
+                 Notifications
               </Text>
               <View style={styles.headerActions}>
                 <TouchableOpacity
-                  style={styles.markAllButton}
+                  style={[
+                    styles.markAllButton,
+                    (allNotificationsRead || notifications.length === 0) && styles.markAllButtonDisabled
+                  ]}
                   onPress={markAllNotificationsRead}
+                  disabled={allNotificationsRead || notifications.length === 0}
                   accessibilityLabel="Mark all notifications as read"
                 >
                   <FontAwesome5 name="check-double" size={14} color="#fff" />
@@ -274,7 +292,7 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
                 </View>
                 {item.read && (
                   <View style={styles.readIndicator}>
-                    <FontAwesome5 name="check" size={14} color="#4CAF50" />
+                    <FontAwesome5 name="check" size={14} color="#ff9100" />
                   </View>
                 )}
               </TouchableOpacity>
@@ -328,7 +346,7 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    backgroundColor: 'rgba(18, 18, 18, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     paddingTop: StatusBar.currentHeight || 50,
   },
   loadingContainer: {
@@ -340,8 +358,6 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 20,
     paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(77, 82, 89, 0.7)',
   },
   headerContent: {
     flexDirection: 'row',
@@ -351,7 +367,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
-    fontSize: 18,
+    fontSize: 25,
   },
   headerActions: {
     flexDirection: 'row',
@@ -361,10 +377,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    borderRadius: 15,
+    paddingHorizontal: 15,
     paddingVertical: 8,
     marginRight: 10,
+  },
+  markAllButtonDisabled: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    opacity: 0.5,
   },
   markAllText: {
     color: '#fff',
@@ -387,7 +407,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   filterButton: {
-    paddingHorizontal: 26,
+    paddingHorizontal: 25,
     paddingVertical: 8,
     borderRadius: 50,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
@@ -406,7 +426,7 @@ const styles = StyleSheet.create({
   },
   notificationItem: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     borderRadius: 8,
     padding: 15,
     marginBottom: 10,

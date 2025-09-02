@@ -12,7 +12,9 @@ import {
   FlatList,
   Modal,
   ScrollView,
-  Image
+  Image,
+  Dimensions,
+  Platform
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { FontAwesome5 } from '@expo/vector-icons';
@@ -74,6 +76,14 @@ const PetsScreen = () => {
   const [nameToDelete, setNameToDelete] = useState<string | null>(null);
   const [registerButtonText, setRegisterButtonText] = useState('Register');
   const [activeTab, setActiveTab] = useState('Pet Management');
+  
+  // Online/offline tracking based on battery data changes
+  const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
+  const [isDeviceOnline, setIsDeviceOnline] = useState(true);
+  const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
+  
+  // Configuration for offline detection (in milliseconds)
+  const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
   const isManualScrollRef = useRef(false);
   
   // Animation for sliding subtabs
@@ -209,6 +219,58 @@ const PetsScreen = () => {
       unsubscribe();
     };
   }, []);
+
+  // Monitor device online status based on battery data updates
+  useEffect(() => {
+    const checkOnlineStatus = () => {
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastBatteryUpdate;
+      const isOnline = timeSinceLastUpdate < OFFLINE_TIMEOUT;
+      
+      console.log('Pets - Online status check:', {
+        timeSinceLastUpdate: Math.round(timeSinceLastUpdate / 1000) + 's',
+        isOnline,
+        threshold: OFFLINE_TIMEOUT / 1000 + 's'
+      });
+      
+      setIsDeviceOnline(isOnline);
+    };
+
+    // Check immediately and then every 10 seconds
+    checkOnlineStatus();
+    const interval = setInterval(checkOnlineStatus, 10000);
+
+    return () => clearInterval(interval);
+  }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
+
+  // Separate listener for battery level changes to track real-time updates
+  useEffect(() => {
+    const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
+    
+    const unsubscribeBattery = onValue(batteryRef, (snapshot) => {
+      const batteryLevel = snapshot.val();
+      if (batteryLevel !== null && batteryLevel !== undefined) {
+        const now = Date.now();
+        
+        // Only update if battery level actually changed
+        if (previousBatteryLevel !== null && batteryLevel !== previousBatteryLevel) {
+          console.log('Pets - Battery level changed:', {
+            previous: previousBatteryLevel,
+            current: batteryLevel,
+            timestamp: new Date(now).toLocaleTimeString()
+          });
+          setLastBatteryUpdate(now);
+        }
+        
+        setPreviousBatteryLevel(batteryLevel);
+        setBatteryLevel(batteryLevel);
+      }
+    }, (error) => {
+      console.error('Pets - Battery listener error:', error);
+    });
+
+    return () => unsubscribeBattery();
+  }, [previousBatteryLevel]);
 
   const processPetData = (deviceData: any): PetsData => {
     try {
@@ -539,9 +601,14 @@ const PetsScreen = () => {
                 <Text style={styles.taglineText}> Manage pet names and view activity</Text>
               </View>
               <View style={styles.headerData}>
-                  <View style={[styles.statusBadge, styles.connected]}>
-                    <View style={[styles.statusDot, styles.connectedDot]} />
-                    <Text style={styles.statusText}>Online</Text>
+                  <View style={[styles.statusBadge, isDeviceOnline ? styles.connected : styles.disconnected]}>
+                    <View style={[
+                      styles.statusDot,
+                      isDeviceOnline ? styles.connectedDot : styles.disconnectedDot
+                    ]} />
+                    <Text style={styles.statusText}>
+                      {isDeviceOnline ? 'Online' : 'Offline'}
+                    </Text>
                   </View>
                   <View style={styles.batteryIndicator}>
                     <FontAwesome5 name={getBatteryIcon(batteryLevel)} size={16} color="#ff9100" style={styles.batteryIcon} />
@@ -604,15 +671,29 @@ const PetsScreen = () => {
             />
             <View style={styles.sortControls}>
               <Text style={styles.sortText}>Sort by:</Text>
-              <View style={styles.sortSelect}>
+              <TouchableOpacity
+                style={styles.sortSelect}
+                onPress={() => {
+                  // Cycle through sort fields: inactive -> name -> visits -> inactive
+                  if (sortField === 'inactive') {
+                    setSortField('name');
+                  } else if (sortField === 'name') {
+                    setSortField('visits');
+                  } else {
+                    setSortField('inactive');
+                  }
+                }}
+                accessibilityLabel="Change sort field"
+              >
                 <FontAwesome5 name="sort" size={14} color="#fff" />
                 <Text style={styles.sortSelectText}>
                   {sortField === 'name' ? 'Name' : sortField === 'visits' ? 'Visits' : 'Inactive'}
                 </Text>
-              </View>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.sortDirectionButton}
                 onPress={() => setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}
+                accessibilityLabel="Change sort direction"
               >
                 <FontAwesome5
                   name={sortDirection === 'asc' ? 'sort-amount-up' : 'sort-amount-down'}
@@ -625,27 +706,32 @@ const PetsScreen = () => {
 
           <View style={styles.tableContainer}>
             <View style={styles.tableHeader}>
-              <Text style={styles.tableHeaderCell}>RFID Tag</Text>
-              <Text style={styles.tableHeaderCell}>Pet Name</Text>
-              <Text style={styles.tableHeaderCell}>Visits</Text>
-              <Text style={styles.tableHeaderCell}>Last Fed</Text>
+              <Text style={[styles.tableHeaderCell, styles.rfidColumn]}>RFID Tag</Text>
+              <Text style={[styles.tableHeaderCell, styles.nameColumn]}>Pet Name</Text>
+              <Text style={[styles.tableHeaderCell, styles.visitsColumn]}>Visits</Text>
+              <Text style={[styles.tableHeaderCell, styles.lastFedColumn]}>Last Fed</Text>
+              <Text style={[styles.tableHeaderCell, styles.actionColumn]}>Action</Text>
             </View>
 
             <FlatList
               data={sortedPets}
               keyExtractor={(item) => item.uid}
+              showsVerticalScrollIndicator={true}
+              indicatorStyle="white"
               renderItem={({ item }) => (
                 <View style={styles.tableRow}>
-                  <Text style={styles.tableCell}>{item.uid.substring(0, 8)}</Text>
-                  <Text style={styles.tableCell}>{item.name}</Text>
-                  <Text style={styles.tableCell}>{item.visit_count}</Text>
-                  <Text style={styles.tableCell}>{item.last_visit_str}</Text>
-                  <TouchableOpacity
-                    style={styles.editButton}
-                    onPress={() => setSelectedPet(item)}
-                  >
-                    <Text style={styles.editButtonText}>Edit</Text>
-                  </TouchableOpacity>
+                  <Text style={[styles.tableCell, styles.rfidColumn]}>{item.uid.substring(0, 8)}</Text>
+                  <Text style={[styles.tableCell, styles.nameColumn]}>{item.name}</Text>
+                  <Text style={[styles.tableCell, styles.visitsColumn]}>{item.visit_count}</Text>
+                  <Text style={[styles.tableCell, styles.lastFedColumn]}>{item.last_visit_str}</Text>
+                  <View style={styles.actionColumn}>
+                    <TouchableOpacity
+                      style={styles.editButton}
+                      onPress={() => setSelectedPet(item)}
+                    >
+                      <Text style={styles.editButtonText}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
               ListEmptyComponent={
@@ -771,6 +857,8 @@ const PetsScreen = () => {
             data={sections}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => item.render()}
+            showsVerticalScrollIndicator={true}
+            indicatorStyle="white"
             contentContainerStyle={{ paddingBottom: 100 }}
           />
         </View>
@@ -781,37 +869,77 @@ const PetsScreen = () => {
         transparent={true}
         visible={!!selectedPet}
         onRequestClose={() => setSelectedPet(null)}
+        statusBarTranslucent={true}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setSelectedPet(null)}
+        >
+          <TouchableOpacity 
+            style={styles.modalContainer}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
             <Text style={styles.modalTitle}>Edit Pet Name</Text>
             <Text style={styles.modalSubtitle}>RFID: {selectedPet?.uid.substring(0, 8)}</Text>
 
-            <RNPickerSelect
-              onValueChange={(value) =>
-                setSelectedPet((prev) =>
-                  prev ? { ...prev, name: value || prev.name } : null
-                )
-              }
-              items={(data?.all_names || []).map((name) => ({
-                label: name,
-                value: name,
-              }))}
-              style={{
-                inputIOS: styles.pickerText,
-                inputAndroid: styles.pickerText,
-                placeholder: styles.pickerText,
-                viewContainer: styles.modalPicker,
-              }}
-              value={selectedPet?.name}
-              placeholder={{ label: 'Select a name', value: '' }}
-            />
+            <Text style={styles.modalLabel}>Select Pet Name:</Text>
+            <View style={styles.modalPicker} pointerEvents="auto">
+              <RNPickerSelect
+                onValueChange={(value) =>
+                  setSelectedPet((prev) =>
+                    prev ? { ...prev, name: value || prev.name } : null
+                  )
+                }
+                items={(data?.all_names || []).map((name) => ({
+                  label: name,
+                  value: name,
+                }))}
+                style={{
+                  inputIOS: {
+                    color: '#fff',
+                    fontSize: 16,
+                    paddingVertical: 15,
+                    paddingHorizontal: 10,
+                    textAlign: 'center',
+                    fontFamily: 'Poppins',
+                  },
+                  inputAndroid: {
+                    color: '#fff',
+                    fontSize: 16,
+                    paddingVertical: 15,
+                    paddingHorizontal: 10,
+                    textAlign: 'center',
+                    fontFamily: 'Poppins',
+                    backgroundColor: 'transparent',
+                  },
+                  placeholder: {
+                    color: '#aaa',
+                    fontSize: 16,
+                    fontFamily: 'Poppins',
+                  },
+                  iconContainer: {
+                    top: Platform.OS === 'android' ? 20 : 15,
+                    right: 15,
+                  },
+                }}
+                value={selectedPet?.name}
+                placeholder={{ label: 'Select a name', value: '' }}
+                useNativeAndroidPickerStyle={false}
+                touchableWrapperProps={{
+                  style: {
+                    paddingVertical: Platform.OS === 'android' ? 5 : 0,
+                  }
+                }}
+                Icon={() => <FontAwesome5 name="chevron-down" size={16} color="#fff" />}
+              />
+            </View>
 
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
                 onPress={() => setSelectedPet(null)}
-                accessibilityLabel="Cancel edit pet name"
               >
                 <Text style={styles.modalButtonText}>Cancel</Text>
               </TouchableOpacity>
@@ -828,8 +956,8 @@ const PetsScreen = () => {
                 <Text style={styles.modalButtonText}>Save</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       <Modal
@@ -890,21 +1018,52 @@ const PetsScreen = () => {
                 </View>
 
                 <Text style={styles.modalLabel}>Pet Name:</Text>
-                <RNPickerSelect
-                  onValueChange={(value) => setNewName(value || '')}
-                  items={(data?.all_names || []).map((name) => ({
-                    label: name,
-                    value: name,
-                  }))}
-                  style={{
-                    inputIOS: styles.pickerText,
-                    inputAndroid: styles.pickerText,
-                    placeholder: styles.pickerText,
-                    viewContainer: styles.modalPicker,
-                  }}
-                  value={newName}
-                  placeholder={{ label: 'Select a name', value: '' }}
-                />
+                <View style={styles.modalPicker} pointerEvents="auto">
+                  <RNPickerSelect
+                    onValueChange={(value) => setNewName(value || '')}
+                    items={(data?.all_names || []).map((name) => ({
+                      label: name,
+                      value: name,
+                    }))}
+                    style={{
+                      inputIOS: {
+                        color: '#fff',
+                        fontSize: 16,
+                        paddingVertical: 15,
+                        paddingHorizontal: 10,
+                        textAlign: 'center',
+                        fontFamily: 'Poppins',
+                      },
+                      inputAndroid: {
+                        color: '#fff',
+                        fontSize: 16,
+                        paddingVertical: 15,
+                        paddingHorizontal: 10,
+                        textAlign: 'center',
+                        fontFamily: 'Poppins',
+                        backgroundColor: 'transparent',
+                      },
+                      placeholder: {
+                        color: '#aaa',
+                        fontSize: 16,
+                        fontFamily: 'Poppins',
+                      },
+                      iconContainer: {
+                        top: Platform.OS === 'android' ? 20 : 15,
+                        right: 15,
+                      },
+                    }}
+                    value={newName}
+                    placeholder={{ label: 'Select a name', value: '' }}
+                    useNativeAndroidPickerStyle={false}
+                    touchableWrapperProps={{
+                      style: {
+                        paddingVertical: Platform.OS === 'android' ? 5 : 0,
+                      }
+                    }}
+                    Icon={() => <FontAwesome5 name="chevron-down" size={16} color="#fff" />}
+                  />
+                </View>
 
                 <View style={styles.modalButtons}>
                   <TouchableOpacity
@@ -991,7 +1150,7 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    backgroundColor: 'rgba(18, 18, 18, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   loadingContainer: {
     flex: 1,
@@ -1013,8 +1172,8 @@ const styles = StyleSheet.create({
   },
   headerContent: {
     paddingHorizontal: 20,
-    paddingTop: StatusBar.currentHeight || 50,
-    height: 210,
+    paddingTop: StatusBar.currentHeight || 40,
+    height: 190
   },
   logoSection: {
     flexDirection: 'column',
@@ -1027,8 +1186,8 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   headerIcon: {
-    width: 24,
-    height: 24,
+    width: 30,
+    height: 30,
     marginLeft: 10,
   },
   headerText: {
@@ -1066,6 +1225,9 @@ const styles = StyleSheet.create({
   connected: {
     backgroundColor: 'rgba(195, 195, 195, 0.2)',
   },
+  disconnected: {
+    backgroundColor: 'rgba(195, 195, 195, 0.2)',
+  },
   statusDot: {
     width: 8,
     height: 8,
@@ -1074,6 +1236,9 @@ const styles = StyleSheet.create({
   },
   connectedDot: {
     backgroundColor: '#00C853',
+  },
+  disconnectedDot: {
+    backgroundColor: '#1a1a1aff',
   },
   statusText: {
     color: '#fff',
@@ -1151,7 +1316,7 @@ const styles = StyleSheet.create({
   },
   panel: {
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 15,
     marginBottom: 20,
   },
@@ -1180,6 +1345,8 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins',
     fontSize: 14,
     marginRight: 10,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
   },
   sortControls: {
     flexDirection: 'row',
@@ -1222,11 +1389,11 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 8,
   },
   tableHeaderCell: {
-    flex: 1,
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
     fontSize: 12,
     textAlign: 'center',
+    paddingHorizontal: 4,
   },
   tableRow: {
     flexDirection: 'row',
@@ -1236,17 +1403,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tableCell: {
-    flex: 1,
     color: '#e8e8e8',
     fontFamily: 'Poppins',
     fontSize: 12,
     textAlign: 'center',
+    paddingHorizontal: 4,
   },
   editButton: {
     backgroundColor: '#c27006ff',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignSelf: 'center',
   },
   editButtonText: {
     color: '#fff',
@@ -1308,6 +1476,8 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins',
     fontSize: 14,
     marginRight: 10,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
   },
   addButton: {
     backgroundColor: '#c27006ff',
@@ -1350,15 +1520,29 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: Platform.OS === 'android' ? 16 : 20,
+    paddingTop: Platform.OS === 'ios' ? 50 : Platform.OS === 'android' ? 40 : 30,
+    paddingBottom: Platform.OS === 'android' ? 40 : 20,
   },
   modalContainer: {
-    width: '90%',
-    backgroundColor: 'rgba(40, 40, 40, 0.95)',
-    borderRadius: 12,
-    padding: 20,
+    backgroundColor: '#2a2a2a',
+    borderRadius: 15,
+    padding: Platform.OS === 'android' ? 20 : 25,
+    width: Platform.OS === 'android' ? '95%' : '100%',
+    maxWidth: Platform.OS === 'web' ? 350 : Platform.OS === 'android' ? 400 : Dimensions.get('window').width * 0.9,
+    alignSelf: 'center',
+    minHeight: Platform.OS === 'android' ? 200 : undefined,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: Platform.OS === 'android' ? 8 : 5,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1369,111 +1553,165 @@ const styles = StyleSheet.create({
   modalTitle: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
-    fontSize: 18,
+    fontSize: Platform.OS === 'android' ? 18 : 20,
+    textAlign: 'center',
+    marginBottom: 5,
+    includeFontPadding: false,
+    lineHeight: Platform.OS === 'android' ? 24 : undefined,
   },
   closeModalButton: {
-    padding: 10,
+    padding: Platform.OS === 'android' ? 8 : 10,
+    minWidth: Platform.OS === 'android' ? 40 : undefined,
+    minHeight: Platform.OS === 'android' ? 40 : undefined,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   closeModalText: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
-    fontSize: 20,
+    fontSize: Platform.OS === 'android' ? 24 : 20,
+    includeFontPadding: false,
+    textAlign: 'center',
   },
   modalSubtitle: {
-    color: '#a0a0a0',
+    color: '#aaa',
     fontFamily: 'Poppins',
-    fontSize: 12,
-    marginBottom: 15,
+    fontSize: Platform.OS === 'android' ? 16 : 14,
+    textAlign: 'center',
+    marginBottom: 20,
+    includeFontPadding: false,
+    lineHeight: Platform.OS === 'android' ? 20 : undefined,
   },
   modalLabel: {
     color: '#fff',
-    fontFamily: 'Poppins',
-    fontSize: 14,
-    marginBottom: 8,
+    fontFamily: 'Poppins-SemiBold',
+    fontSize: Platform.OS === 'android' ? 18 : 16,
+    marginBottom: 10,
+    textAlign: 'center',
+    includeFontPadding: false,
+    lineHeight: Platform.OS === 'android' ? 22 : undefined,
   },
   modalPicker: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    minHeight: Platform.OS === 'android' ? 50 : undefined,
+    justifyContent: 'center',
   },
   pickerText: {
-    flex: 1,
     color: '#fff',
     fontFamily: 'Poppins',
-    fontSize: 14,
+    fontSize: Platform.OS === 'android' ? 16 : 14,
+    textAlign: 'center',
+    includeFontPadding: false,
+    paddingVertical: Platform.OS === 'android' ? 15 : 12,
+    paddingHorizontal: 10,
   },
   modalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 15,
+    marginTop: 20,
+    gap: Platform.OS === 'android' ? 10 : 15,
+    width: '100%',
   },
   modalButton: {
     flex: 1,
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 10,
+    padding: Platform.OS === 'android' ? 12 : 15,
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: Platform.OS === 'android' ? 45 : 40,
+    minWidth: Platform.OS === 'android' ? 80 : undefined,
   },
   cancelButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    marginRight: 10,
+    marginRight: Platform.OS === 'android' ? 5 : 10,
     borderWidth: 1,
     borderColor: '#fff',
   },
   saveButton: {
-    backgroundColor: '#dd2c00',
+    backgroundColor: '#ff9100',
+    marginLeft: Platform.OS === 'android' ? 5 : 0,
   },
   deleteButton: {
     backgroundColor: '#FF4747',
+    marginLeft: Platform.OS === 'android' ? 5 : 0,
   },
   modalButtonText: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
-    fontSize: 14,
+    fontSize: Platform.OS === 'android' ? 16 : 14,
+    textAlign: 'center',
+    includeFontPadding: false,
   },
   scanningContainer: {
     alignItems: 'center',
-    padding: 20,
+    padding: Platform.OS === 'android' ? 15 : 20,
+    minHeight: Platform.OS === 'android' ? 120 : undefined,
   },
   scanningText: {
     color: '#fff',
     fontFamily: 'Poppins',
-    fontSize: 14,
+    fontSize: Platform.OS === 'android' ? 16 : 14,
     marginBottom: 15,
+    textAlign: 'center',
+    includeFontPadding: false,
+    lineHeight: Platform.OS === 'android' ? 20 : undefined,
   },
   scanningAnimation: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 30,
+    height: Platform.OS === 'android' ? 40 : 30,
     marginBottom: 15,
   },
   wave: {
-    width: 6,
-    height: 20,
+    width: Platform.OS === 'android' ? 8 : 6,
+    height: Platform.OS === 'android' ? 25 : 20,
     backgroundColor: '#dd2c00',
-    marginHorizontal: 3,
+    marginHorizontal: Platform.OS === 'android' ? 4 : 3,
     borderRadius: 3,
   },
   tagDetectedContainer: {
     marginTop: 10,
+    width: '100%',
   },
   detectedTag: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(76, 175, 80, 0.2)',
     borderRadius: 8,
-    padding: 12,
+    padding: Platform.OS === 'android' ? 15 : 12,
     marginBottom: 15,
+    minHeight: Platform.OS === 'android' ? 50 : undefined,
   },
   detectedTagText: {
     color: '#fff',
     fontFamily: 'Poppins-SemiBold',
-    fontSize: 14,
+    fontSize: Platform.OS === 'android' ? 16 : 14,
     marginLeft: 8,
+    includeFontPadding: false,
+    lineHeight: Platform.OS === 'android' ? 20 : undefined,
+  },
+  // Column width styles for better table alignment
+  rfidColumn: {
+    flex: 1.2,
+  },
+  nameColumn: {
+    flex: 1.5,
+  },
+  visitsColumn: {
+    flex: 0.8,
+  },
+  lastFedColumn: {
+    flex: 1.3,
+  },
+  actionColumn: {
+    flex: 0.8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
 
