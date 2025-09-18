@@ -5,7 +5,6 @@ import {
     Text,
     StyleSheet,
     StatusBar,
-    ImageBackground,
     ScrollView,
     TouchableOpacity,
     ActivityIndicator,
@@ -18,6 +17,8 @@ import { LineChart } from 'react-native-chart-kit';
 import { FontAwesome5, MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { ref, onValue } from 'firebase/database';
 import { database } from '../../config/firebase';
+import SharedBackground from '../../components/SharedBackground';
+import { useDeviceOnlineStatus } from '../../hooks/useDeviceOnlineStatus';
 
 interface DeviceStatus {
     status: string;
@@ -78,13 +79,8 @@ const HomeScreen = () => {
     const [selectedPeriod, setSelectedPeriod] = useState('7days');
     const [activeTab, setActiveTab] = useState('Stats');
     
-    // Online/offline tracking based on battery data changes
-    const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
-    const [isDeviceOnline, setIsDeviceOnline] = useState(true);
-    const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
-    
-    // Configuration for offline detection (in milliseconds)
-    const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
+    // Use shared online status hook
+    const { isDeviceOnline, batteryLevel } = useDeviceOnlineStatus();
     
     // Force re-render every 10 seconds to update "time since last update" display
     const [, forceUpdate] = useState({});
@@ -165,29 +161,6 @@ const HomeScreen = () => {
     }, [activeTab, tabLayouts]);
     const [contentOffsets, setContentOffsets] = useState<{ [key: string]: number }>({});
 
-    // Monitor device online status based on battery data updates
-    useEffect(() => {
-        const checkOnlineStatus = () => {
-            const now = Date.now();
-            const timeSinceLastUpdate = now - lastBatteryUpdate;
-            const isOnline = timeSinceLastUpdate < OFFLINE_TIMEOUT;
-            
-            console.log('Online status check:', {
-                timeSinceLastUpdate: Math.round(timeSinceLastUpdate / 1000) + 's',
-                isOnline,
-                threshold: OFFLINE_TIMEOUT / 1000 + 's'
-            });
-            
-            setIsDeviceOnline(isOnline);
-        };
-
-        // Check immediately and then every 10 seconds
-        checkOnlineStatus();
-        const interval = setInterval(checkOnlineStatus, 10000);
-
-        return () => clearInterval(interval);
-    }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
-
     useEffect(() => {
         const dbRef = ref(database, '/devices/kibbler_001');
 
@@ -195,15 +168,6 @@ const HomeScreen = () => {
             const firebaseData = snapshot.val();
             if (firebaseData) {
                 console.log('Firebase data received:', JSON.stringify(firebaseData, null, 2)); 
-                
-                // Track battery level changes for online/offline detection
-                const currentBatteryLevel = firebaseData.device_status?.battery_level;
-                if (currentBatteryLevel !== undefined && currentBatteryLevel !== previousBatteryLevel) {
-                    const now = Date.now();
-                    setLastBatteryUpdate(now);
-                    setPreviousBatteryLevel(currentBatteryLevel);
-                    console.log('Battery level changed (main listener):', previousBatteryLevel, '->', currentBatteryLevel, 'at', new Date(now).toLocaleTimeString());
-                }
                 
                 const processedData = processDeviceData(firebaseData);
                 setData(processedData);
@@ -216,27 +180,6 @@ const HomeScreen = () => {
 
         return () => unsubscribe();
     }, [selectedPeriod]);
-
-    // Separate listener for battery level changes to track real-time updates
-    useEffect(() => {
-        const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
-        
-        const unsubscribeBattery = onValue(batteryRef, (snapshot) => {
-            const batteryLevel = snapshot.val();
-            if (batteryLevel !== null && batteryLevel !== undefined) {
-                const now = Date.now();
-                if (batteryLevel !== previousBatteryLevel) {
-                    console.log('Battery level update detected (battery listener):', previousBatteryLevel, '->', batteryLevel, 'at', new Date(now).toLocaleTimeString());
-                    setLastBatteryUpdate(now);
-                    setPreviousBatteryLevel(batteryLevel);
-                }
-            }
-        }, (error) => {
-            console.error('Battery listener error:', error);
-        });
-
-        return () => unsubscribeBattery();
-    }, [previousBatteryLevel]);
 
     // Re-process data when online status changes
     useEffect(() => {
@@ -649,27 +592,11 @@ const HomeScreen = () => {
         return 'Unknown';
     };
 
-    const formatTimeSinceLastUpdate = (): string => {
-        const now = Date.now();
-        const timeSince = now - lastBatteryUpdate;
-        const seconds = Math.floor(timeSince / 1000);
-        const minutes = Math.floor(seconds / 60);
-        const hours = Math.floor(minutes / 60);
-
-        if (hours > 0) {
-            return `${hours}h ${minutes % 60}m ago`;
-        } else if (minutes > 0) {
-            return `${minutes}m ago`;
-        } else {
-            return `${seconds}s ago`;
-        }
-    };
-
     const getLastSeenValue = (): string => {
         if (isDeviceOnline) {
             return 'Now';
         } else {
-            return formatTimeSinceLastUpdate();
+            return 'Offline';
         }
     };
 
@@ -1087,15 +1014,10 @@ const HomeScreen = () => {
     }
 
     return (
-        <View style={styles.container}>
-            <ImageBackground
-                source={require('../../assets/background.png')}
-                style={styles.background}
-                resizeMode="cover"
-            >
-                <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-                <View style={styles.contentContainer}>
-                    <View style={styles.headerContent}>
+        <SharedBackground>
+            <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+            <View style={styles.contentContainer}>
+                <View style={styles.headerContent}>
                         <View style={styles.logoSection}>
                             <View style={styles.dashboardTitleRow}>
                                 <Text style={styles.headerText}>Dashboard</Text>
@@ -1218,23 +1140,11 @@ const HomeScreen = () => {
                         </View>
                     </ScrollView>
                 </View>
-            </ImageBackground>
-        </View>
+        </SharedBackground>
     );
 };
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-    },
-    background: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 0,
-    },
     contentContainer: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',

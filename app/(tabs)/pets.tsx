@@ -5,7 +5,6 @@ import {
   Text,
   StyleSheet,
   StatusBar,
-  ImageBackground,
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
@@ -21,6 +20,8 @@ import { FontAwesome5 } from '@expo/vector-icons';
 import { ref, onValue, set, update, get } from 'firebase/database';
 import { database } from '../../config/firebase';
 import RNPickerSelect from 'react-native-picker-select';
+import SharedBackground from '../../components/SharedBackground';
+import { useDeviceOnlineStatus } from '../../hooks/useDeviceOnlineStatus';
 
 interface Pet {
   uid: string;
@@ -71,19 +72,13 @@ const PetsScreen = () => {
   const [registerModalVisible, setRegisterModalVisible] = useState(false);
   const [tagRegistrationMode, setTagRegistrationMode] = useState(false);
   const [detectedTag, setDetectedTag] = useState<string | null>(null);
-  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [nameToDelete, setNameToDelete] = useState<string | null>(null);
   const [registerButtonText, setRegisterButtonText] = useState('Register');
   const [activeTab, setActiveTab] = useState('Pet Management');
   
-  // Online/offline tracking based on battery data changes
-  const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
-  const [isDeviceOnline, setIsDeviceOnline] = useState(true);
-  const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
-  
-  // Configuration for offline detection (in milliseconds)
-  const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
+  // Use shared online status hook
+  const { isDeviceOnline, batteryLevel } = useDeviceOnlineStatus();
   const isManualScrollRef = useRef(false);
   
   // Animation for sliding subtabs
@@ -210,67 +205,10 @@ const PetsScreen = () => {
       setLoading(false);
     });
 
-    const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
-    onValue(batteryRef, (snapshot) => {
-      setBatteryLevel(snapshot.val());
-    });
-
     return () => {
       unsubscribe();
     };
   }, []);
-
-  // Monitor device online status based on battery data updates
-  useEffect(() => {
-    const checkOnlineStatus = () => {
-      const now = Date.now();
-      const timeSinceLastUpdate = now - lastBatteryUpdate;
-      const isOnline = timeSinceLastUpdate < OFFLINE_TIMEOUT;
-      
-      console.log('Pets - Online status check:', {
-        timeSinceLastUpdate: Math.round(timeSinceLastUpdate / 1000) + 's',
-        isOnline,
-        threshold: OFFLINE_TIMEOUT / 1000 + 's'
-      });
-      
-      setIsDeviceOnline(isOnline);
-    };
-
-    // Check immediately and then every 10 seconds
-    checkOnlineStatus();
-    const interval = setInterval(checkOnlineStatus, 10000);
-
-    return () => clearInterval(interval);
-  }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
-
-  // Separate listener for battery level changes to track real-time updates
-  useEffect(() => {
-    const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
-    
-    const unsubscribeBattery = onValue(batteryRef, (snapshot) => {
-      const batteryLevel = snapshot.val();
-      if (batteryLevel !== null && batteryLevel !== undefined) {
-        const now = Date.now();
-        
-        // Only update if battery level actually changed
-        if (previousBatteryLevel !== null && batteryLevel !== previousBatteryLevel) {
-          console.log('Pets - Battery level changed:', {
-            previous: previousBatteryLevel,
-            current: batteryLevel,
-            timestamp: new Date(now).toLocaleTimeString()
-          });
-          setLastBatteryUpdate(now);
-        }
-        
-        setPreviousBatteryLevel(batteryLevel);
-        setBatteryLevel(batteryLevel);
-      }
-    }, (error) => {
-      console.error('Pets - Battery listener error:', error);
-    });
-
-    return () => unsubscribeBattery();
-  }, [previousBatteryLevel]);
 
   const processPetData = (deviceData: any): PetsData => {
     try {
@@ -845,24 +783,18 @@ const PetsScreen = () => {
   }
 
   return (
-    <View style={styles.container}>
-      <ImageBackground
-        source={require('../../assets/background.png')}
-        style={styles.background}
-        resizeMode="cover"
-      >
-        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-        <View style={styles.contentContainer}>
-          <FlatList
-            data={sections}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => item.render()}
-            showsVerticalScrollIndicator={true}
-            indicatorStyle="white"
-            contentContainerStyle={{ paddingBottom: 100 }}
-          />
-        </View>
-      </ImageBackground>
+    <SharedBackground>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <View style={styles.contentContainer}>
+        <FlatList
+          data={sections}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => item.render()}
+          showsVerticalScrollIndicator={true}
+          indicatorStyle="white"
+          contentContainerStyle={{ paddingBottom: 100 }}
+        />
+      </View>
 
       <Modal
         animationType="slide"
@@ -1132,22 +1064,11 @@ const PetsScreen = () => {
           </View>
         </View>
       </Modal>
-    </View>
+    </SharedBackground>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  background: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 0,
-  },
   contentContainer: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1347,6 +1268,8 @@ const styles = StyleSheet.create({
     marginRight: 10,
     textAlignVertical: 'center',
     includeFontPadding: false,
+    height: 40,
+    lineHeight: 20,
   },
   sortControls: {
     flexDirection: 'row',
@@ -1478,6 +1401,8 @@ const styles = StyleSheet.create({
     marginRight: 10,
     textAlignVertical: 'center',
     includeFontPadding: false,
+    height: 40,
+    lineHeight: 20,
   },
   addButton: {
     backgroundColor: '#c27006ff',

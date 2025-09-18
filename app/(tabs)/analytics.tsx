@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   StatusBar,
-  ImageBackground,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
@@ -18,6 +17,8 @@ import { FontAwesome5 } from '@expo/vector-icons';
 import { ref, onValue } from 'firebase/database';
 import { database } from '../../config/firebase';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, interpolate } from 'react-native-reanimated';
+import SharedBackground from '../../components/SharedBackground';
+import { useDeviceOnlineStatus } from '../../hooks/useDeviceOnlineStatus';
 
 declare global {
   interface Date {
@@ -71,13 +72,8 @@ const AnalyticsScreen = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [petSearchTerm, setPetSearchTerm] = useState('');
   
-  // Online/offline tracking based on battery data changes
-  const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
-  const [isDeviceOnline, setIsDeviceOnline] = useState(true);
-  const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
-  
-  // Configuration for offline detection (in milliseconds)
-  const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
+  // Use shared online status hook
+  const { isDeviceOnline, batteryLevel } = useDeviceOnlineStatus();
   const scrollViewRef = useRef<ScrollView>(null);
   const isManualScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -134,29 +130,6 @@ const AnalyticsScreen = () => {
     }
   }, [activeSubtab, tabLayouts]);
 
-  // Monitor device online status based on battery data updates
-  useEffect(() => {
-    const checkOnlineStatus = () => {
-      const now = Date.now();
-      const timeSinceLastUpdate = now - lastBatteryUpdate;
-      const isOnline = timeSinceLastUpdate < OFFLINE_TIMEOUT;
-      
-      console.log('Analytics - Online status check:', {
-        timeSinceLastUpdate: Math.round(timeSinceLastUpdate / 1000) + 's',
-        isOnline,
-        threshold: OFFLINE_TIMEOUT / 1000 + 's'
-      });
-      
-      setIsDeviceOnline(isOnline);
-    };
-
-    // Check immediately and then every 10 seconds
-    checkOnlineStatus();
-    const interval = setInterval(checkOnlineStatus, 10000);
-
-    return () => clearInterval(interval);
-  }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
-
   useEffect(() => {
     const dbRef = ref(database, '/devices/kibbler_001');
 
@@ -177,34 +150,6 @@ const AnalyticsScreen = () => {
 
     return () => unsubscribe();
   }, []);
-
-  // Separate listener for battery level changes to track real-time updates
-  useEffect(() => {
-    const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
-    
-    const unsubscribeBattery = onValue(batteryRef, (snapshot) => {
-      const batteryLevel = snapshot.val();
-      if (batteryLevel !== null && batteryLevel !== undefined) {
-        const now = Date.now();
-        
-        // Only update if battery level actually changed
-        if (previousBatteryLevel !== null && batteryLevel !== previousBatteryLevel) {
-          console.log('Analytics - Battery level changed:', {
-            previous: previousBatteryLevel,
-            current: batteryLevel,
-            timestamp: new Date(now).toLocaleTimeString()
-          });
-          setLastBatteryUpdate(now);
-        }
-        
-        setPreviousBatteryLevel(batteryLevel);
-      }
-    }, (error) => {
-      console.error('Analytics - Battery listener error:', error);
-    });
-
-    return () => unsubscribeBattery();
-  }, [previousBatteryLevel]);
 
   const processAnalyticsData = (deviceData: DeviceData): AnalyticsData => {
     const feedingHistory = deviceData.feeding_history || {};
@@ -390,6 +335,7 @@ const AnalyticsScreen = () => {
       daily_history: dailyHistory,
       device_status: { 
         ...deviceData.device_status, 
+        battery_level: batteryLevel,
         status: isDeviceOnline ? 'online' : 'offline' // Use our tracked online status
       }
     };
@@ -517,14 +463,9 @@ const AnalyticsScreen = () => {
   }
 
   return (
-    <View style={styles.container}>
-      <ImageBackground
-        source={require('../../assets/background.png')}
-        style={styles.background}
-        resizeMode="cover"
-      >
-        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-        <View style={styles.contentContainer}>
+    <SharedBackground>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <View style={styles.contentContainer}>
           <View style={styles.headerContent}>
             <View style={styles.logoSection}>
               <View style={styles.dashboardTitleRow}>
@@ -551,8 +492,8 @@ const AnalyticsScreen = () => {
                     </Text>
                   </View>
                   <View style={styles.batteryIndicator}>
-                    <FontAwesome5 name={getBatteryIcon(data?.device_status?.battery_level)} size={16} color="#ff9100" style={styles.batteryIcon} />
-                    <Text style={styles.batteryText}>{data?.device_status?.battery_level ?? '--'}%</Text>
+                    <FontAwesome5 name={getBatteryIcon(batteryLevel)} size={16} color="#ff9100" style={styles.batteryIcon} />
+                    <Text style={styles.batteryText}>{batteryLevel ?? '--'}%</Text>
                   </View>
                 </View>
             </View>
@@ -928,23 +869,11 @@ const AnalyticsScreen = () => {
             </View>
           </ScrollView>
         </View>
-      </ImageBackground>
-    </View>
+    </SharedBackground>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  background: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 0,
-  },
   contentContainer: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1211,14 +1140,13 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins',
     fontSize: 14,
     paddingHorizontal: 12,
-    paddingVertical: 0,
+    paddingVertical: 8,
     minWidth: 150,
     maxWidth: 200,
     height: 35,
     textAlignVertical: 'center',
     includeFontPadding: false,
-    lineHeight: 35,
-    paddingBottom: 15,
+    lineHeight: 19,
   },
   panelSubtitle: {
     color: '#a0a0a0',

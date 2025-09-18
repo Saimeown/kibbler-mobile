@@ -289,6 +289,9 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins',
     fontSize: 14,
     paddingVertical: 10,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
+    height: 40,
   },
   inputError: {
     borderColor: '#ff4747',
