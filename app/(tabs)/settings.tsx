@@ -44,7 +44,6 @@ const SettingsScreen = () => {
     confirm: false,
   });
 
-  // Modal states for iOS pickers
   const [showPortionPicker, setShowPortionPicker] = useState(false);
   const [showIntervalPicker, setShowIntervalPicker] = useState(false);
   const [showWakePicker, setShowWakePicker] = useState(false);
@@ -52,17 +51,14 @@ const SettingsScreen = () => {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  // Online/offline tracking based on battery data changes
   const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
   const [isDeviceOnline, setIsDeviceOnline] = useState(true);
   const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
   
-  // Configuration for offline detection (in milliseconds)
-  const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
+  const OFFLINE_TIMEOUT = 120000;
 
   const router = useRouter();
 
-  // Picker options
   const portionOptions = [
     { label: '25%', value: '25' },
     { label: '50%', value: '50' },
@@ -89,7 +85,6 @@ const SettingsScreen = () => {
     { label: '12 hours', value: '12' },
   ];
 
-  // iOS picker handlers
   const showPortionActionSheet = () => {
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
@@ -170,7 +165,6 @@ const SettingsScreen = () => {
     }
   }, [toast]);
 
-  // Monitor device online status based on battery data updates
   useEffect(() => {
     const checkOnlineStatus = () => {
       const now = Date.now();
@@ -186,14 +180,12 @@ const SettingsScreen = () => {
       setIsDeviceOnline(isOnline);
     };
 
-    // Check immediately and then every 10 seconds
     checkOnlineStatus();
     const interval = setInterval(checkOnlineStatus, 10000);
 
     return () => clearInterval(interval);
   }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
 
-  // Separate listener for battery level changes to track real-time updates
   useEffect(() => {
     const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
     
@@ -202,7 +194,6 @@ const SettingsScreen = () => {
       if (batteryLevel !== null && batteryLevel !== undefined) {
         const now = Date.now();
         
-        // Only update if battery level actually changed
         if (previousBatteryLevel !== null && batteryLevel !== previousBatteryLevel) {
           console.log('Settings - Battery level changed:', {
             previous: previousBatteryLevel,

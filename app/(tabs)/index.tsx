@@ -79,10 +79,8 @@ const HomeScreen = () => {
     const [selectedPeriod, setSelectedPeriod] = useState('7days');
     const [activeTab, setActiveTab] = useState('Stats');
     
-    // Use shared online status hook
     const { isDeviceOnline, batteryLevel } = useDeviceOnlineStatus();
     
-    // Force re-render every 10 seconds to update "time since last update" display
     const [, forceUpdate] = useState({});
     
     useEffect(() => {
@@ -97,12 +95,12 @@ const HomeScreen = () => {
     const isManualScrollRef = useRef(false);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     
-    // Animation for sliding subtabs
+    // for sliding subtabs
     const indicatorPosition = useSharedValue(0);
     const indicatorWidth = useSharedValue(80);
     const scrollX = useSharedValue(0);
     
-    // Blinking animation for device status values
+    // for device status values
     const blinkOpacity = useSharedValue(1);
     
     useEffect(() => {
@@ -127,7 +125,7 @@ const HomeScreen = () => {
         const { x, width } = event.nativeEvent.layout;
         setTabLayouts(prev => ({
             ...prev,
-            [tabName]: { x: x + 2, width: width } // Minimal offset for perfect centering
+            [tabName]: { x: x + 2, width: width } 
         }));
     };
     
@@ -139,13 +137,11 @@ const HomeScreen = () => {
         if (tabLayouts[activeTab] && !isManualScrollRef.current) {
             const layout = tabLayouts[activeTab];
             
-            // Always animate the indicator immediately
             indicatorPosition.value = withTiming(layout.x, { duration: 300 });
             indicatorWidth.value = withTiming(layout.width, { duration: 300 });
             
-            // Auto-scroll to make the active tab visible (separate from indicator animation)
             if (subtabScrollViewRef.current) {
-                const screenWidth = 350; // Approximate visible width
+                const screenWidth = 350;
                 const tabCenter = layout.x + layout.width / 2;
                 const currentScroll = scrollX.value;
                 
@@ -181,11 +177,8 @@ const HomeScreen = () => {
         return () => unsubscribe();
     }, [selectedPeriod]);
 
-    // Re-process data when online status changes
     useEffect(() => {
         if (data) {
-            // Find the original Firebase data by reversing the process, or store it separately
-            // For now, we'll trigger a re-render by updating the data with new status
             setData(prevData => {
                 if (!prevData) return prevData;
                 return {
@@ -203,13 +196,11 @@ const HomeScreen = () => {
         setActiveTab(tabName);
         isManualScrollRef.current = true;
 
-        // Immediately update the indicator position for the new tab
         if (tabLayouts[tabName]) {
             const layout = tabLayouts[tabName];
             indicatorPosition.value = withTiming(layout.x, { duration: 300 });
             indicatorWidth.value = withTiming(layout.width, { duration: 300 });
             
-            // Auto-scroll if needed
             if (subtabScrollViewRef.current) {
                 const screenWidth = 350;
                 const tabCenter = layout.x + layout.width / 2;
@@ -232,10 +223,9 @@ const HomeScreen = () => {
             });
         }
 
-        // Reset the manual scroll flag after animation completes
         setTimeout(() => {
             isManualScrollRef.current = false;
-        }, 1000); // Increased from 500ms to 1000ms for more stable behavior
+        }, 1000);
     };
 
     const handleLayout = (tabName: string) => (event: any) => {
@@ -270,7 +260,7 @@ const HomeScreen = () => {
     const processDeviceData = (firebaseData: any): DashboardData => {
         const deviceStatus = {
             ...firebaseData.device_status,
-            status: isDeviceOnline ? 'online' : 'offline', // Use our tracked online status
+            status: isDeviceOnline ? 'online' : 'offline',
             last_seen: firebaseData.device_status?.last_seen || new Date().toISOString(),
             battery_level: firebaseData.device_status?.battery_level || 0,
             container_level: firebaseData.device_status?.container_level || 0,
@@ -1089,19 +1079,15 @@ const HomeScreen = () => {
                         showsVerticalScrollIndicator={true}
                         scrollIndicatorInsets={{ right: 1 }}
                         onScroll={(event) => {
-                            // Don't update activeTab if user just manually tapped a subtab
                             if (isManualScrollRef.current) return;
                             
-                            // Capture scroll values immediately to avoid synthetic event issues
                             const scrollY = event.nativeEvent.contentOffset.y;
                             const offsets = Object.entries(contentOffsets);
                             
-                            // Clear any existing timeout
                             if (scrollTimeoutRef.current) {
                                 clearTimeout(scrollTimeoutRef.current);
                             }
                             
-                            // Debounce the scroll detection using captured values
                             scrollTimeoutRef.current = setTimeout(() => {
                                 for (let i = offsets.length - 1; i >= 0; i--) {
                                     const [tabName, offset] = offsets[i];
@@ -1112,7 +1098,7 @@ const HomeScreen = () => {
                                         break;
                                     }
                                 }
-                            }, 100); // 100ms debounce
+                            }, 100); 
                         }}
                         scrollEventThrottle={16}
                         bounces={false}
@@ -1286,7 +1272,7 @@ const styles = StyleSheet.create({
         borderRadius: 20,
     },
     activeSubtab: {
-        // backgroundColor removed - using sliding indicator instead
+        
     },
     subtabText: {
         color: '#fff',

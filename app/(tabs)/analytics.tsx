@@ -72,13 +72,11 @@ const AnalyticsScreen = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [petSearchTerm, setPetSearchTerm] = useState('');
   
-  // Use shared online status hook
   const { isDeviceOnline, batteryLevel } = useDeviceOnlineStatus();
   const scrollViewRef = useRef<ScrollView>(null);
   const isManualScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Animation for sliding indicator
   const indicatorPosition = useSharedValue(0);
   const indicatorWidth = useSharedValue(80);
   const scrollX = useSharedValue(0);
@@ -97,7 +95,7 @@ const AnalyticsScreen = () => {
     const { x, width } = event.nativeEvent.layout;
     setTabLayouts(prev => ({
       ...prev,
-      [tabName]: { x: x + 2, width: width } // Minimal offset for perfect centering
+      [tabName]: { x: x + 2, width: width }
     }));
   };
   
@@ -109,13 +107,11 @@ const AnalyticsScreen = () => {
     if (tabLayouts[activeSubtab] && !isManualScrollRef.current) {
       const layout = tabLayouts[activeSubtab];
       
-      // Always animate the indicator immediately
       indicatorPosition.value = withTiming(layout.x, { duration: 300 });
       indicatorWidth.value = withTiming(layout.width, { duration: 300 });
       
-      // Auto-scroll to make the active tab visible (separate from indicator animation)
       if (subtabScrollViewRef.current) {
-        const screenWidth = 350; // Approximate visible width
+        const screenWidth = 350; 
         const tabCenter = layout.x + layout.width / 2;
         const currentScroll = scrollX.value;
         
@@ -158,18 +154,15 @@ const AnalyticsScreen = () => {
 
     const uniquePets: { [uid: string]: string } = {};
     
-    // First, add pets from pet_registry (all detected pets)
     Object.entries(petRegistry).forEach(([uid, name]) => {
       uniquePets[uid] = name as string;
     });
     
-    // Then, add/update pets from feedingHistory (this captures all pets with feeding activity)
     Object.values(feedingHistory).forEach((feeding: Feeding) => {
       if (feeding.uid) {
         const uid = feeding.uid.toString();
         const petName = petRegistry[uid] || feeding.pet_name || 'Unknown';
         
-        // Add this pet even if not in registry (same logic as pets.tsx)
         uniquePets[uid] = petName;
       }
     });
@@ -336,7 +329,7 @@ const AnalyticsScreen = () => {
       device_status: { 
         ...deviceData.device_status, 
         battery_level: batteryLevel,
-        status: isDeviceOnline ? 'online' : 'offline' // Use our tracked online status
+        status: isDeviceOnline ? 'online' : 'offline' 
       }
     };
   };
@@ -402,13 +395,11 @@ const AnalyticsScreen = () => {
     setActiveSubtab(tabName);
     isManualScrollRef.current = true;
 
-    // Immediately update the indicator position for the new tab
     if (tabLayouts[tabName]) {
       const layout = tabLayouts[tabName];
       indicatorPosition.value = withTiming(layout.x, { duration: 300 });
       indicatorWidth.value = withTiming(layout.width, { duration: 300 });
       
-      // Auto-scroll if needed
       if (subtabScrollViewRef.current) {
         const screenWidth = 350;
         const tabCenter = layout.x + layout.width / 2;
@@ -431,7 +422,6 @@ const AnalyticsScreen = () => {
       });
     }
 
-    // Reset the manual scroll flag after animation completes
     setTimeout(() => {
       isManualScrollRef.current = false;
     }, 1000);
@@ -538,19 +528,15 @@ const AnalyticsScreen = () => {
             showsVerticalScrollIndicator={true}
             scrollIndicatorInsets={{ right: 1 }}
             onScroll={(event) => {
-              // Don't update activeSubtab if user just manually tapped a subtab
               if (isManualScrollRef.current) return;
               
-              // Capture scroll values immediately to avoid synthetic event issues
               const scrollY = event.nativeEvent.contentOffset.y;
               const offsets = Object.entries(contentOffsets);
               
-              // Clear any existing timeout
               if (scrollTimeoutRef.current) {
                 clearTimeout(scrollTimeoutRef.current);
               }
               
-              // Debounce the scroll detection using captured values
               scrollTimeoutRef.current = setTimeout(() => {
                 for (let i = offsets.length - 1; i >= 0; i--) {
                   const [tabName, offset] = offsets[i];
@@ -561,7 +547,7 @@ const AnalyticsScreen = () => {
                     break;
                   }
                 }
-              }, 100); // 100ms debounce
+              }, 100); 
             }}
             scrollEventThrottle={16}
             bounces={false}
@@ -847,7 +833,6 @@ const AnalyticsScreen = () => {
                       pet.name.toLowerCase().includes(petSearchTerm.toLowerCase())
                     )
                     .sort((a, b) => {
-                      // Sort by timestamp descending, but put "Never" at the end
                       if (a.time === 'Never' && b.time === 'Never') return 0;
                       if (a.time === 'Never') return 1;
                       if (b.time === 'Never') return -1;
@@ -1022,7 +1007,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   activeSubtab: {
-    // backgroundColor removed - using sliding indicator instead
+    
   },
   subtabText: {
     color: '#fff',

@@ -171,11 +171,9 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
     });
   };
 
-  // Check if all notifications are read
   const allNotificationsRead = notifications.length > 0 && notifications.every(notification => notification.read);
 
   const markAllNotificationsRead = () => {
-    // Don't proceed if all notifications are already read or there are no notifications
     if (allNotificationsRead || notifications.length === 0) {
       return;
     }
@@ -188,7 +186,6 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
       }
     });
 
-    // If no updates needed, return early
     if (Object.keys(updates).length === 0) {
       return;
     }

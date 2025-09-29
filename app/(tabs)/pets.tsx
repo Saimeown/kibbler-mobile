@@ -77,11 +77,9 @@ const PetsScreen = () => {
   const [registerButtonText, setRegisterButtonText] = useState('Register');
   const [activeTab, setActiveTab] = useState('Pet Management');
   
-  // Use shared online status hook
   const { isDeviceOnline, batteryLevel } = useDeviceOnlineStatus();
   const isManualScrollRef = useRef(false);
   
-  // Animation for sliding subtabs
   const indicatorPosition = useSharedValue(0);
   const indicatorWidth = useSharedValue(80);
   const scrollX = useSharedValue(0);
@@ -100,7 +98,7 @@ const PetsScreen = () => {
     const { x, width } = event.nativeEvent.layout;
     setTabLayouts(prev => ({
       ...prev,
-      [tabName]: { x: x + 2, width: width } // Minimal offset for perfect centering
+      [tabName]: { x: x + 2, width: width } 
     }));
   };
   
@@ -112,13 +110,11 @@ const PetsScreen = () => {
     if (tabLayouts[activeTab] && !isManualScrollRef.current) {
       const layout = tabLayouts[activeTab];
       
-      // Always animate the indicator immediately
       indicatorPosition.value = withTiming(layout.x, { duration: 300 });
       indicatorWidth.value = withTiming(layout.width, { duration: 300 });
       
-      // Auto-scroll to make the active tab visible (separate from indicator animation)
       if (subtabScrollViewRef.current) {
-        const screenWidth = 350; // Approximate visible width
+        const screenWidth = 350; 
         const tabCenter = layout.x + layout.width / 2;
         const currentScroll = scrollX.value;
         
@@ -137,13 +133,11 @@ const PetsScreen = () => {
     setActiveTab(tab);
     isManualScrollRef.current = true;
 
-    // Immediately update the indicator position for the new tab
     if (tabLayouts[tab]) {
       const layout = tabLayouts[tab];
       indicatorPosition.value = withTiming(layout.x, { duration: 300 });
       indicatorWidth.value = withTiming(layout.width, { duration: 300 });
       
-      // Auto-scroll if needed
       if (subtabScrollViewRef.current) {
         const screenWidth = 350;
         const tabCenter = layout.x + layout.width / 2;
@@ -159,7 +153,6 @@ const PetsScreen = () => {
       }
     }
 
-    // Reset the manual scroll flag after animation completes
     setTimeout(() => {
       isManualScrollRef.current = false;
     }, 1000);
@@ -612,7 +605,6 @@ const PetsScreen = () => {
               <TouchableOpacity
                 style={styles.sortSelect}
                 onPress={() => {
-                  // Cycle through sort fields: inactive -> name -> visits -> inactive
                   if (sortField === 'inactive') {
                     setSortField('name');
                   } else if (sortField === 'name') {
@@ -1217,7 +1209,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   activeSubtab: {
-    // backgroundColor removed - using sliding indicator instead
+
   },
   subtabText: {
     color: '#fff',
@@ -1620,7 +1612,6 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
     lineHeight: Platform.OS === 'android' ? 20 : undefined,
   },
-  // Column width styles for better table alignment
   rfidColumn: {
     flex: 1.2,
   },

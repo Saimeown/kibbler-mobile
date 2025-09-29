@@ -26,19 +26,16 @@ const AnimatedTabIcon = ({ focused, name, size, color }: {
 
   useEffect(() => {
     if (focused) {
-      // Main scale animation with pulse
       scale.value = withSequence(
         withTiming(1.4, { duration: 150, easing: Easing.out(Easing.exp) }),
         withTiming(1.1, { duration: 150, easing: Easing.inOut(Easing.quad) })
       );
       
-      // Pulse opacity effect
       pulseOpacity.value = withSequence(
         withTiming(0.8, { duration: 150, easing: Easing.out(Easing.exp) }),
         withTiming(0, { duration: 300, easing: Easing.inOut(Easing.quad) })
       );
       
-      // Color transition to orange
       colorProgress.value = withTiming(1, { 
         duration: 200, 
         easing: Easing.out(Easing.exp) 
@@ -46,19 +43,16 @@ const AnimatedTabIcon = ({ focused, name, size, color }: {
         runOnJS(setIconColor)('#ff9100');
       });
     } else {
-      // Scale back to normal
       scale.value = withTiming(1, { 
         duration: 200, 
         easing: Easing.inOut(Easing.quad) 
       });
       
-      // Reset pulse
       pulseOpacity.value = withTiming(0, { 
         duration: 100, 
         easing: Easing.inOut(Easing.quad) 
       });
       
-      // Color transition to white/inactive
       colorProgress.value = withTiming(0, { 
         duration: 200, 
         easing: Easing.out(Easing.exp) 
