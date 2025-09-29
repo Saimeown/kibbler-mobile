@@ -18,10 +18,10 @@
 
 ---
 
-## 📱 Overview
+## Overview
 Kibbler is a mobile application designed to help pet owners monitor and manage their pets' daily activities, health, and notifications. Built with React Native and Expo, Kibbler offers a modern, user-friendly interface and insightful analytics to keep your furry friends happy and healthy.
 
-## ✨ Features
+## Features
 - User authentication and secure login
 - Dashboard with quick access to pet data
 - Analytics for pet activities and health trends
@@ -29,7 +29,7 @@ Kibbler is a mobile application designed to help pet owners monitor and manage t
 - Manage multiple pets
 - Customizable settings
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) (v16 or higher recommended)
@@ -67,20 +67,17 @@ app/              # App screens and navigation
 readme-files/     # Screenshots for documentation
 ```
 
-## 🖼️ Screenshots
+## Screenshots
 | Login | Dashboard | Analytics | Notifications | Pets | Settings |
 |-------|-----------|-----------|---------------|------|----------|
 | ![](readme-files/login.png) | ![](readme-files/dashboard.png) | ![](readme-files/analytics.png) | ![](readme-files/notifications.png) | ![](readme-files/pets.png) | ![](readme-files/settings.png) |
 
-## 🛠️ Technologies Used
+## Technologies Used
 - React Native
 - Expo
 - TypeScript
 - Firebase
 - Custom Hooks
 
-## 🤝 Contributing
+## Contributing
 Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
-
-## 📄 License
-This project is licensed under the MIT License.
