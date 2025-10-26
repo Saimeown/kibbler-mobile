@@ -217,10 +217,11 @@ const AnalyticsScreen = () => {
       const hour = new Date(feeding.timestamp).getUTCHours();
       hourlyCounts[hour]++;
     });
-    const peakHours = hourlyCounts.reduce((acc: number[], count, index) => {
-      if (count === Math.max(...hourlyCounts)) acc.push(index);
+    const maxCount = Math.max(...hourlyCounts);
+    const peakHours = maxCount > 0 ? hourlyCounts.reduce((acc: number[], count, index) => {
+      if (count === maxCount) acc.push(index);
       return acc;
-    }, []);
+    }, []) : [];
 
     const lastVisitTimes: { [uid: string]: { name: string; time: string; timestamp: number } } = {};
     Object.entries(uniquePets).forEach(([uid, name]) => {
@@ -669,7 +670,9 @@ const AnalyticsScreen = () => {
 
                 <Text style={styles.peakHoursFooter}>
                   <Text style={styles.bold}>Peak hour: </Text>
-                  {data?.peak_hours.map(h => new Date(0, 0, 0, h).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })).join(', ')}
+                  {data?.peak_hours && data.peak_hours.length > 0 
+                    ? data.peak_hours.map(h => new Date(0, 0, 0, h).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })).join(', ')
+                    : 'No feeding data yet'}
                 </Text>
               </View>
             </View>

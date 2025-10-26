@@ -30,8 +30,6 @@ const SettingsScreen = () => {
 
   const [portionLevel, setPortionLevel] = useState('100');
   const [feedingInterval, setFeedingInterval] = useState('2');
-  const [autoWakeEnabled, setAutoWakeEnabled] = useState(true);
-  const [autoWakeHours, setAutoWakeHours] = useState('4');
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
   const [currentPasscode, setCurrentPasscode] = useState('');
@@ -46,7 +44,6 @@ const SettingsScreen = () => {
 
   const [showPortionPicker, setShowPortionPicker] = useState(false);
   const [showIntervalPicker, setShowIntervalPicker] = useState(false);
-  const [showWakePicker, setShowWakePicker] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -74,15 +71,6 @@ const SettingsScreen = () => {
     { label: '8 hours', value: '8' },
     { label: '12 hours', value: '12' },
     { label: '24 hours', value: '24' },
-  ];
-
-  const wakeOptions = [
-    { label: '1 hour', value: '1' },
-    { label: '2 hours', value: '2' },
-    { label: '4 hours', value: '4' },
-    { label: '6 hours', value: '6' },
-    { label: '8 hours', value: '8' },
-    { label: '12 hours', value: '12' },
   ];
 
   const showPortionActionSheet = () => {
@@ -120,25 +108,6 @@ const SettingsScreen = () => {
       );
     } else {
       setShowIntervalPicker(true);
-    }
-  };
-
-  const showWakeActionSheet = () => {
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ['Cancel', ...wakeOptions.map(option => option.label)],
-          cancelButtonIndex: 0,
-          title: 'Select Wake Time',
-        },
-        (buttonIndex) => {
-          if (buttonIndex > 0) {
-            setAutoWakeHours(wakeOptions[buttonIndex - 1].value);
-          }
-        }
-      );
-    } else {
-      setShowWakePicker(true);
     }
   };
 
@@ -219,11 +188,10 @@ const SettingsScreen = () => {
       (snapshot) => {
         const data = snapshot.val();
         if (data) {
-          setPortionLevel((data.portion_level || 100).toString());
-          setFeedingInterval((data.feeding_interval_hours || 2).toString());
-          const sleepSettings = data.sleep_settings || {};
-          setAutoWakeEnabled(sleepSettings.auto_wake_enabled !== undefined ? sleepSettings.auto_wake_enabled : true);
-          setAutoWakeHours((sleepSettings.auto_wake_hours || 4).toString());
+          // Read from device_status path
+          const deviceStatus = data.device_status || {};
+          setPortionLevel((deviceStatus.portion_level || 100).toString());
+          setFeedingInterval((deviceStatus.feeding_interval_hours || 2).toString());
         }
         setLoading(false);
       },
@@ -232,8 +200,6 @@ const SettingsScreen = () => {
         setToast({ message: 'Failed to load settings', type: 'error' });
         setPortionLevel('100');
         setFeedingInterval('2');
-        setAutoWakeEnabled(true);
-        setAutoWakeHours('4');
         setLoading(false);
       },
       { onlyOnce: true }
@@ -244,10 +210,8 @@ const SettingsScreen = () => {
     setIsSavingSettings(true);
     const dbRef = ref(database, '/devices/kibbler_001');
     const updates = {
-      portion_level: parseInt(portionLevel),
-      feeding_interval_hours: parseInt(feedingInterval),
-      'sleep_settings/auto_wake_enabled': autoWakeEnabled,
-      'sleep_settings/auto_wake_hours': parseInt(autoWakeHours),
+      'device_status/portion_level': parseInt(portionLevel),
+      'device_status/feeding_interval_hours': parseInt(feedingInterval),
     };
 
     update(dbRef, updates)
@@ -260,18 +224,6 @@ const SettingsScreen = () => {
       })
       .finally(() => {
         setIsSavingSettings(false);
-      });
-  };
-
-  const sendSleepCommand = () => {
-    const dbRef = ref(database, '/devices/kibbler_001/sleep_settings/user_request_sleep');
-    set(dbRef, true)
-      .then(() => {
-        setToast({ message: 'Sleep command sent to device', type: 'success' });
-      })
-      .catch((error) => {
-        console.error('Error sending sleep command:', error);
-        setToast({ message: 'Failed to send sleep command', type: 'error' });
       });
   };
 
@@ -437,64 +389,6 @@ const SettingsScreen = () => {
                 </View>
               )}
             </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Device Sleep</Text>
-              <TouchableOpacity
-                style={[styles.sleepButton, !isDeviceOnline && styles.disabledButton]}
-                onPress={isDeviceOnline ? sendSleepCommand : undefined}
-                disabled={!isDeviceOnline}
-                accessibilityLabel={isDeviceOnline ? "Put device to sleep" : "Device offline - sleep unavailable"}
-              >
-                <Ionicons name="moon" size={16} color={isDeviceOnline ? "#fff" : "#666"} />
-                <Text style={[styles.sleepButtonText, !isDeviceOnline && styles.disabledButtonText]}>
-                  {isDeviceOnline ? "Sleep Now" : "Device Offline"}
-                </Text>
-              </TouchableOpacity>
-              <Text style={styles.sleepNote}>
-                {isDeviceOnline 
-                  ? "Put your Kibbler to sleep to conserve battery."
-                  : "Device must be online to send sleep command."
-                }
-              </Text>
-            </View>
-            <View style={styles.formGroup}>
-              <View style={styles.toggleContainer}>
-                <Text style={styles.label}>Automatically wake up</Text>
-                <Switch
-                  value={autoWakeEnabled}
-                  onValueChange={(value) => setAutoWakeEnabled(value)}
-                  trackColor={{ false: '#767577', true: '#ff9100' }}
-                  thumbColor={autoWakeEnabled ? '#fff' : '#f4f3f4'}
-                  accessibilityLabel="Toggle auto wake"
-                />
-              </View>
-              {autoWakeEnabled && (
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Wake after</Text>
-                  {Platform.OS === 'ios' ? (
-                    <TouchableOpacity style={styles.pickerButton} onPress={showWakeActionSheet}>
-                      <Text style={styles.pickerButtonText}>
-                        {getLabelForValue(wakeOptions, autoWakeHours)}
-                      </Text>
-                      <Ionicons name="chevron-down" size={16} color="#fff" />
-                    </TouchableOpacity>
-                  ) : (
-                    <View style={styles.pickerContainer}>
-                      <Picker
-                        selectedValue={autoWakeHours}
-                        onValueChange={(value) => setAutoWakeHours(value)}
-                        style={styles.picker}
-                        itemStyle={styles.pickerItem}
-                      >
-                        {wakeOptions.map((option) => (
-                          <Picker.Item key={option.value} label={option.label} value={option.value} />
-                        ))}
-                      </Picker>
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
             <TouchableOpacity
               style={[styles.saveButton, isSavingSettings && styles.saveButtonDisabled]}
               onPress={saveDeviceSettings}
@@ -502,7 +396,7 @@ const SettingsScreen = () => {
               accessibilityLabel="Save device settings"
             >
               <Text style={styles.saveButtonText}>
-                {isSavingSettings ? 'Saving...' : 'Save All'}
+                {isSavingSettings ? 'Saving...' : 'Save Settings'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -647,31 +541,6 @@ const SettingsScreen = () => {
                 style={styles.modalPicker}
               >
                 {intervalOptions.map((option) => (
-                  <Picker.Item key={option.value} label={option.label} value={option.value} />
-                ))}
-              </Picker>
-            </View>
-          </View>
-        </Modal>
-
-        <Modal visible={showWakePicker} transparent animationType="slide">
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Select Wake Time</Text>
-                <TouchableOpacity onPress={() => setShowWakePicker(false)}>
-                  <Ionicons name="close" size={24} color="#fff" />
-                </TouchableOpacity>
-              </View>
-              <Picker
-                selectedValue={autoWakeHours}
-                onValueChange={(value) => {
-                  setAutoWakeHours(value);
-                  setShowWakePicker(false);
-                }}
-                style={styles.modalPicker}
-              >
-                {wakeOptions.map((option) => (
                   <Picker.Item key={option.value} label={option.label} value={option.value} />
                 ))}
               </Picker>

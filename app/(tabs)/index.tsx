@@ -269,13 +269,13 @@ const HomeScreen = () => {
             uptime: firebaseData.device_status?.uptime || 0,
             firebase_connected: firebaseData.device_status?.firebase_connected || false,
             feeding_interval_hours: firebaseData.device_status?.feeding_interval_hours || 2,
-            last_empty_time: firebaseData.last_empty_time || undefined 
+            last_empty_time: firebaseData.freshness?.last_empty_time || undefined 
         };
 
         let lastEmptyTime = 'Never';
         let timeSinceReset = 'N/A';
-        if (firebaseData.last_empty_time) {
-            const emptyTime = firebaseData.last_empty_time;
+        if (firebaseData.freshness?.last_empty_time) {
+            const emptyTime = firebaseData.freshness.last_empty_time;
 
             if (typeof emptyTime === 'number') {
                 const seconds = Math.floor(emptyTime / 1000);
@@ -349,11 +349,15 @@ const HomeScreen = () => {
             });
         }
 
+        // Count currently registered pets from pet_registry, not stats
+        const petRegistry = firebaseData.pets?.pet_registry || {};
+        const registeredPetsCount = Object.keys(petRegistry).length;
+
         const stats = {
             today_dispense_count: firebaseData.stats?.today_dispense_count || 0,
             week_dispense_count: getCurrentWeekDispenses(firebaseData),
             today_unique_pets: firebaseData.stats?.today_unique_pets || 0,
-            total_unique_uids: firebaseData.stats?.total_unique_uids || 0,
+            total_unique_uids: registeredPetsCount,  // Use actual registry count instead
             last_reset_date: firebaseData.stats?.last_reset_date || new Date().toISOString().split('T')[0],
             last_fed_time: latestFeedingTime || (firebaseData.stats?.last_fed_time && !isNaN(new Date(firebaseData.stats.last_fed_time).getTime()) ? firebaseData.stats.last_fed_time : new Date().toISOString()),
             last_fed_pet: firebaseData.stats?.last_fed_pet || 'None'
@@ -469,8 +473,8 @@ const HomeScreen = () => {
             device_status: deviceStatus,
             stats,
             current_settings: {
-                portion_level: firebaseData.portion_level || 100,
-                stale_food_alert: firebaseData.stale_food_alert || 'Clear'
+                portion_level: deviceStatus.portion_level || 100,
+                stale_food_alert: firebaseData.alerts?.stale_food_alert || 'Clear'
             },
             recent_activities: activities.length > 0 ? activities : [{
                 type: 'feeding',
@@ -637,7 +641,7 @@ const HomeScreen = () => {
                         <FontAwesome5 name="wave-square" style={[styles.statTrend, styles.yellow]} />
                     </View>
                     <View style={styles.statContent}>
-                        <Text style={styles.statLabel}>Pets Detected (All Time)</Text>
+                        <Text style={styles.statLabel}>Pets Registered</Text>
                         <Text style={styles.statValue}>{data.stats.total_unique_uids}</Text>
                         <Text style={[styles.statChange, styles.yellow]}>Unique Pets</Text>
                     </View>

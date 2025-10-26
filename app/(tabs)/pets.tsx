@@ -167,7 +167,7 @@ const PetsScreen = () => {
         const processedData = processPetData(firebaseData);
         setData(processedData);
       } else {
-        set(ref(database, '/devices/kibbler_001/default_pet_names'), defaultPetNames)
+        set(ref(database, '/devices/kibbler_001/pets/default_pet_names'), defaultPetNames)
           .then(() => {
             setData({
               pet_stats: {},
@@ -206,12 +206,12 @@ const PetsScreen = () => {
   const processPetData = (deviceData: any): PetsData => {
     try {
       const feedingHistory = deviceData.feeding_history || {};
-      const petRegistry = deviceData.pet_registry || {};
+      const petRegistry = deviceData.pets?.pet_registry || {};
       const lastFedTimes = deviceData.last_fed_times || {};
-      const defaultPetNamesFromFirebase = deviceData.default_pet_names || [];
+      const defaultPetNamesFromFirebase = deviceData.pets?.default_pet_names || [];
 
       if (!defaultPetNamesFromFirebase || defaultPetNamesFromFirebase.length === 0) {
-        set(ref(database, '/devices/kibbler_001/default_pet_names'), defaultPetNames)
+        set(ref(database, '/devices/kibbler_001/pets/default_pet_names'), defaultPetNames)
           .catch((error) => console.error('Error initializing default pet names:', error));
       }
 
@@ -310,7 +310,7 @@ const PetsScreen = () => {
       return;
     }
     try {
-      const defaultNamesRef = ref(database, '/devices/kibbler_001/default_pet_names');
+      const defaultNamesRef = ref(database, '/devices/kibbler_001/pets/default_pet_names');
       const snapshot = await get(defaultNamesRef);
       const currentNames = snapshot.val() || [];
       if (currentNames.includes(newName.trim())) {
@@ -328,7 +328,7 @@ const PetsScreen = () => {
 
   const deletePetName = async (name: string) => {
     try {
-      const defaultNamesRef = ref(database, '/devices/kibbler_001/default_pet_names');
+      const defaultNamesRef = ref(database, '/devices/kibbler_001/pets/default_pet_names');
       const snapshot = await get(defaultNamesRef);
       const currentNames = snapshot.val() || [];
       const updatedNames = currentNames.filter((n: string) => n !== name);
