@@ -208,7 +208,7 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
   if (!fontsLoaded || loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#dd2c00" />
+        <ActivityIndicator size="large" color="#fbae3c" />
       </View>
     );
   }
@@ -289,7 +289,7 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
                 </View>
                 {item.read && (
                   <View style={styles.readIndicator}>
-                    <FontAwesome5 name="check" size={14} color="#ff9100" />
+                    <FontAwesome5 name="check" size={14} color="#fbae3c" />
                   </View>
                 )}
               </TouchableOpacity>

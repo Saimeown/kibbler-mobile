@@ -236,6 +236,101 @@ const HomeScreen = () => {
         }));
     };
 
+    /**
+     * CRITICAL: Calculate Today's Feedings from feeding_history (MATCHES WEB LOGIC)
+     * This replaces using firebaseData.stats.today_dispense_count which is stale/cached
+     */
+    const getTodayFeedings = (firebaseData: any): { count: number; uniquePets: number } => {
+        let count = 0;
+        const uniquePetUIDs = new Set<string>();
+
+        if (!firebaseData.feeding_history) {
+            return { count: 0, uniquePets: 0 };
+        }
+
+        // Get pet registry for filtering
+        const petRegistry = firebaseData.pets?.pet_registry || {};
+        const registeredUIDs = new Set(Object.keys(petRegistry));
+
+        // Get today's start in local timezone
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const todayStartTime = todayStart.getTime();
+
+        // Iterate through feeding_history
+        Object.entries(firebaseData.feeding_history).forEach(([key, feeding]: [string, any]) => {
+            if (!feeding.timestamp || !feeding.uid) return;
+
+            // Only count registered pets
+            if (!registeredUIDs.has(feeding.uid)) return;
+
+            try {
+                const feedingTime = new Date(feeding.timestamp).getTime();
+                
+                // Check if feeding is today
+                if (feedingTime >= todayStartTime) {
+                    count++;
+                    uniquePetUIDs.add(feeding.uid);
+                }
+            } catch (e) {
+                console.error('Error processing feeding timestamp:', e);
+            }
+        });
+
+        return {
+            count: count,
+            uniquePets: uniquePetUIDs.size
+        };
+    };
+
+    /**
+     * CRITICAL: Calculate Week's Feedings from feeding_history (MATCHES WEB LOGIC)
+     * This replaces using history.daily which is aggregated/stale data
+     */
+    const getCurrentWeekFeedings = (firebaseData: any): number => {
+        let count = 0;
+
+        if (!firebaseData.feeding_history) {
+            return 0;
+        }
+
+        // Get pet registry for filtering
+        const petRegistry = firebaseData.pets?.pet_registry || {};
+        const registeredUIDs = new Set(Object.keys(petRegistry));
+
+        // Get last Monday at midnight
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dayOfWeek = today.getDay();
+        const daysSinceMonday = (dayOfWeek + 6) % 7; // 0 = Monday, 6 = Sunday
+        const lastMonday = new Date(today);
+        lastMonday.setDate(today.getDate() - daysSinceMonday);
+        const lastMondayTime = lastMonday.getTime();
+
+        // Iterate through feeding_history
+        Object.entries(firebaseData.feeding_history).forEach(([key, feeding]: [string, any]) => {
+            if (!feeding.timestamp || !feeding.uid) return;
+
+            // Only count registered pets
+            if (!registeredUIDs.has(feeding.uid)) return;
+
+            try {
+                const feedingTime = new Date(feeding.timestamp).getTime();
+                
+                // Check if feeding is this week (>= last Monday)
+                if (feedingTime >= lastMondayTime) {
+                    count++;
+                }
+            } catch (e) {
+                console.error('Error processing feeding timestamp:', e);
+            }
+        });
+
+        return count;
+    };
+
+    // DEPRECATED: Old function using wrong data source (history.daily)
+    // Kept for reference but should NOT be used
     const getCurrentWeekDispenses = (firebaseData: any): number => {
         let total = 0;
         if (!firebaseData.history?.daily) return 0;
@@ -353,11 +448,16 @@ const HomeScreen = () => {
         const petRegistry = firebaseData.pets?.pet_registry || {};
         const registeredPetsCount = Object.keys(petRegistry).length;
 
+        // CRITICAL: Calculate stats from feeding_history (MATCHES WEB LOGIC)
+        // DO NOT use firebaseData.stats - it contains stale/cached data
+        const todayStats = getTodayFeedings(firebaseData);
+        const weekCount = getCurrentWeekFeedings(firebaseData);
+
         const stats = {
-            today_dispense_count: firebaseData.stats?.today_dispense_count || 0,
-            week_dispense_count: getCurrentWeekDispenses(firebaseData),
-            today_unique_pets: firebaseData.stats?.today_unique_pets || 0,
-            total_unique_uids: registeredPetsCount,  // Use actual registry count instead
+            today_dispense_count: todayStats.count,  // ✅ CALCULATED from feeding_history
+            week_dispense_count: weekCount,  // ✅ CALCULATED from feeding_history
+            today_unique_pets: todayStats.uniquePets,  // ✅ CALCULATED from feeding_history
+            total_unique_uids: registeredPetsCount,  // ✅ Use actual registry count
             last_reset_date: firebaseData.stats?.last_reset_date || new Date().toISOString().split('T')[0],
             last_fed_time: latestFeedingTime || (firebaseData.stats?.last_fed_time && !isNaN(new Date(firebaseData.stats.last_fed_time).getTime()) ? firebaseData.stats.last_fed_time : new Date().toISOString()),
             last_fed_pet: firebaseData.stats?.last_fed_pet || 'None'
@@ -418,16 +518,54 @@ const HomeScreen = () => {
             } else if (selectedPeriod === '4weeks') {
                 weeklyChart = [0, 0, 0, 0];
                 chartLabels = ['', '', '', ''];
-                for (let i = 3; i >= 0; i--) {
-                    const date = new Date();
-                    date.setDate(date.getDate() - i * 7);
-                    const dateString = date.toISOString().split('T')[0];
-                    chartLabels[3 - i] = formatChartLabel(date);
-
-                    if (dailyData[dateString]) {
-                        weeklyChart[3 - i] = dailyData[dateString].dispense_count ||
-                            (dailyData[dateString].feedings ? Object.keys(dailyData[dateString].feedings).length : 0);
+                
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const todayTime = today.getTime();
+                
+                // Calculate 4 weeks of data (matches web logic)
+                for (let weekNum = 3; weekNum >= 0; weekNum--) {
+                    // Week start is today minus (weekNum * 7) days
+                    const weekStart = new Date(today);
+                    weekStart.setDate(today.getDate() - (weekNum * 7));
+                    
+                    // Week end is week start + 6 days
+                    const weekEnd = new Date(weekStart);
+                    weekEnd.setDate(weekStart.getDate() + 6);
+                    
+                    // Shorter label format for mobile: "Oct 11-17" instead of "Oct 11 - Oct 17"
+                    const startLabel = formatChartLabel(weekStart);
+                    const endDay = weekEnd.getDate();
+                    const endMonth = weekEnd.getMonth();
+                    const startMonth = weekStart.getMonth();
+                    
+                    // If same month, show "Oct 11-17", if different months show "Oct 25-Nov 1"
+                    if (startMonth === endMonth) {
+                        chartLabels[3 - weekNum] = `${startLabel}-${endDay}`;
+                    } else {
+                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        chartLabels[3 - weekNum] = `${startLabel}-${monthNames[endMonth]} ${endDay}`;
                     }
+                    
+                    let weekTotal = 0;
+                    // Aggregate all 7 days in this week (but only up to today)
+                    for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+                        const currentDate = new Date(weekStart);
+                        currentDate.setDate(weekStart.getDate() + dayOffset);
+                        
+                        // Don't count future dates
+                        if (currentDate.getTime() > todayTime) {
+                            break;
+                        }
+                        
+                        const dateString = currentDate.toISOString().split('T')[0];
+                        
+                        if (dailyData[dateString]) {
+                            weekTotal += dailyData[dateString].dispense_count ||
+                                (dailyData[dateString].feedings ? Object.keys(dailyData[dateString].feedings).length : 0);
+                        }
+                    }
+                    weeklyChart[3 - weekNum] = weekTotal;
                 }
             } else if (selectedPeriod === '6months') {
                 weeklyChart = [0, 0, 0, 0, 0, 0];
@@ -455,10 +593,31 @@ const HomeScreen = () => {
                     chartLabels[6 - i] = formatChartLabel(date);
                 }
             } else if (selectedPeriod === '4weeks') {
-                for (let i = 3; i >= 0; i--) {
-                    const date = new Date();
-                    date.setDate(date.getDate() - i * 7);
-                    chartLabels[3 - i] = formatChartLabel(date);
+                weeklyChart = [0, 0, 0, 0];
+                chartLabels = ['', '', '', ''];
+                
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                
+                for (let weekNum = 3; weekNum >= 0; weekNum--) {
+                    const weekStart = new Date(today);
+                    weekStart.setDate(today.getDate() - (weekNum * 7));
+                    
+                    const weekEnd = new Date(weekStart);
+                    weekEnd.setDate(weekStart.getDate() + 6);
+                    
+                    // Shorter label format for mobile
+                    const startLabel = formatChartLabel(weekStart);
+                    const endDay = weekEnd.getDate();
+                    const endMonth = weekEnd.getMonth();
+                    const startMonth = weekStart.getMonth();
+                    
+                    if (startMonth === endMonth) {
+                        chartLabels[3 - weekNum] = `${startLabel}-${endDay}`;
+                    } else {
+                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        chartLabels[3 - weekNum] = `${startLabel}-${monthNames[endMonth]} ${endDay}`;
+                    }
                 }
             } else if (selectedPeriod === '6months') {
                 for (let i = 5; i >= 0; i--) {
@@ -506,30 +665,50 @@ const HomeScreen = () => {
             } else if (typeof timestamp === 'string') {
                 date = new Date(timestamp);
                 if (isNaN(date.getTime())) {
-                    const match = timestamp.match(/^(\w{3})\s(\d{1,2}),\s(\d{1,2}):(\d{2})\s(AM|PM)$/i);
-                    if (match) {
-                        const [, monthStr, day, hours, minutes, period] = match;
-                        const monthNames: { [key: string]: number } = {
-                            jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-                            jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
-                        };
-                        const monthKey = monthStr.toLowerCase();
-                        const month = monthNames[monthKey];
-                        if (month === undefined) {
-                            console.error('Invalid month in timestamp:', timestamp);
-                            return 'Invalid date';
-                        }
-                        const year = new Date().getFullYear();
+                    // Try to parse "Today, 10:37 PM" or "Yesterday, 10:37 PM" format
+                    const relativeMatch = timestamp.match(/^(Today|Yesterday),\s(\d{1,2}):(\d{2})\s(AM|PM)$/i);
+                    if (relativeMatch) {
+                        const [, dayStr, hours, minutes, period] = relativeMatch;
+                        const now = new Date();
                         let hourNum = parseInt(hours, 10);
                         if (period.toUpperCase() === 'PM' && hourNum !== 12) {
                             hourNum += 12;
                         } else if (period.toUpperCase() === 'AM' && hourNum === 12) {
                             hourNum = 0;
                         }
-                        date = new Date(year, month, parseInt(day, 10), hourNum, parseInt(minutes, 10));
+                        
+                        if (dayStr.toLowerCase() === 'today') {
+                            date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hourNum, parseInt(minutes, 10));
+                        } else { // yesterday
+                            date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, hourNum, parseInt(minutes, 10));
+                        }
                     } else {
-                        console.error('Invalid date format:', timestamp);
-                        return 'Invalid date';
+                        // Try to parse "Oct 31, 10:37 PM" format
+                        const match = timestamp.match(/^(\w{3})\s(\d{1,2}),\s(\d{1,2}):(\d{2})\s(AM|PM)$/i);
+                        if (match) {
+                            const [, monthStr, day, hours, minutes, period] = match;
+                            const monthNames: { [key: string]: number } = {
+                                jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+                                jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+                            };
+                            const monthKey = monthStr.toLowerCase();
+                            const month = monthNames[monthKey];
+                            if (month === undefined) {
+                                console.error('Invalid month in timestamp:', timestamp);
+                                return 'Invalid date';
+                            }
+                            const year = new Date().getFullYear();
+                            let hourNum = parseInt(hours, 10);
+                            if (period.toUpperCase() === 'PM' && hourNum !== 12) {
+                                hourNum += 12;
+                            } else if (period.toUpperCase() === 'AM' && hourNum === 12) {
+                                hourNum = 0;
+                            }
+                            date = new Date(year, month, parseInt(day, 10), hourNum, parseInt(minutes, 10));
+                        } else {
+                            console.error('Invalid date format:', timestamp);
+                            return 'Invalid date';
+                        }
                     }
                 }
             } else {
@@ -552,7 +731,13 @@ const HomeScreen = () => {
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
 
-        const timeString = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        // Format time without leading zero (matches web: "2:37 PM" not "02:37 PM")
+        const hours = date.getHours();
+        const minutes = date.getMinutes();
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours % 12 || 12; // Convert to 12-hour format, 0 becomes 12
+        const displayMinutes = minutes.toString().padStart(2, '0');
+        const timeString = `${displayHours}:${displayMinutes} ${ampm}`;
 
         if (date >= today) {
             return `Today, ${timeString}`;
@@ -717,7 +902,11 @@ const HomeScreen = () => {
                         <View style={styles.metricInfo}>
                             <View style={styles.metricRow}>
                                 <Text style={styles.metricLabel}>Battery</Text>
-                                <Text style={styles.metricValue}>{data.device_status.battery_level}%</Text>
+                                <Text style={styles.metricValue}>
+                                    {isDeviceOnline && data.device_status.battery_level !== undefined 
+                                        ? `${data.device_status.battery_level}%` 
+                                        : '--'}
+                                </Text>
                             </View>
                         </View>
                     </View>
@@ -743,7 +932,9 @@ const HomeScreen = () => {
                         <View style={styles.metricInfo}>
                             <View style={styles.metricRow}>
                                 <Text style={styles.metricLabel}>Container Level</Text>
-                                <Text style={styles.metricValue}>{data.device_status.container_level}%</Text>
+                                <Text style={styles.metricValue}>
+                                    {isDeviceOnline ? `${data.device_status.container_level}%` : '--'}
+                                </Text>
                             </View>
                         </View>
                     </View>
@@ -755,7 +946,9 @@ const HomeScreen = () => {
                         <View style={styles.metricInfo}>
                             <View style={styles.metricRow}>
                                 <Text style={styles.metricLabel}>Food Level</Text>
-                                <Text style={styles.metricValue}>{data.device_status.tray_level}%</Text>
+                                <Text style={styles.metricValue}>
+                                    {isDeviceOnline ? `${data.device_status.tray_level}%` : '--'}
+                                </Text>
                             </View>
                         </View>
                     </View>
@@ -802,7 +995,7 @@ const HomeScreen = () => {
             <View style={styles.panel}>
                 <View style={styles.panelHeader}>
                     <View style={styles.panelTitleRow}>
-                        <FontAwesome5 name="chart-bar" size={16} color="#ff9100" />
+                        <FontAwesome5 name="chart-bar" size={16} color="#fbae3c" />
                         <Text style={styles.panelTitle}>Feeding Trend</Text>
                     </View>
                     <View style={styles.dropdownContainer} ref={dropdownRef}>
@@ -857,7 +1050,7 @@ const HomeScreen = () => {
                             backgroundGradientFromOpacity: 0,
                             backgroundGradientToOpacity: 0,
                             decimalPlaces: 0,
-                            color: (opacity = 1) => `rgba(255, 145, 0, ${opacity})`,
+                            color: (opacity = 1) => `rgba(251, 174, 60, ${opacity})`,
                             labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
                             style: {
                                 borderRadius: 16,
@@ -865,7 +1058,10 @@ const HomeScreen = () => {
                             propsForDots: {
                                 r: "6",
                                 strokeWidth: "2",
-                                stroke: "#ff9100"
+                                stroke: "#fbae3c"
+                            },
+                            propsForLabels: {
+                                fontSize: selectedPeriod === '4weeks' ? 9 : 11,
                             }
                         }}
                         bezier
@@ -874,6 +1070,7 @@ const HomeScreen = () => {
                             borderRadius: 16,
                             zIndex: 0,
                         }}
+                        fromZero
                     />
                 </View>
             </View>
@@ -920,7 +1117,7 @@ const HomeScreen = () => {
             <View style={styles.panel}>
                 <View style={styles.panelHeader}>
                     <View style={styles.panelTitleRow}>
-                        <FontAwesome5 name="leaf" size={16} color="#ff9100" />
+                        <FontAwesome5 name="leaf" size={16} color="#fbae3c" />
                         <Text style={styles.panelTitle}>Freshness Monitoring</Text>
                     </View>
                 </View>
@@ -975,7 +1172,7 @@ const HomeScreen = () => {
             <View style={styles.panel}>
                 <View style={styles.panelHeader}>
                     <View style={styles.panelTitleRow}>
-                        <FontAwesome5 name="clock" size={16} color="#ff9100" />
+                        <FontAwesome5 name="clock" size={16} color="#fbae3c" />
                         <Text style={styles.panelTitle}>Recent Feeding Activity</Text>
                     </View>
                 </View>
@@ -1002,7 +1199,7 @@ const HomeScreen = () => {
     if (!fontsLoaded || loading) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#dd2c00" />
+                <ActivityIndicator size="large" color="#fbae3c" />
             </View>
         );
     }
@@ -1037,8 +1234,12 @@ const HomeScreen = () => {
                                         </Text>
                                     </View>
                                     <View style={styles.batteryIndicator}>
-                                        <FontAwesome5 name={getBatteryIcon(data?.device_status.battery_level || 0)} size={16} color="#fea127ff" style={styles.batteryIcon} />
-                                        <Text style={styles.batteryText}>{data?.device_status.battery_level}%</Text>
+                                        <FontAwesome5 name={getBatteryIcon(data?.device_status.battery_level || 0)} size={16} color="#fbae3c" style={styles.batteryIcon} />
+                                        <Text style={styles.batteryText}>
+                                            {isDeviceOnline && data?.device_status.battery_level !== undefined 
+                                                ? `${data.device_status.battery_level}%` 
+                                                : '--'}
+                                        </Text>
                                     </View>
                                 </View>
                         </View>
@@ -1254,7 +1455,7 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 7.5,
         height: 35,
-        backgroundColor: '#ff9100',
+        backgroundColor: '#fbae3c',
         borderRadius: 20,
         zIndex: 1,
     },
@@ -1332,7 +1533,7 @@ const styles = StyleSheet.create({
         color: '#9C27B0',
     },
     orange: {
-        color: '#ff4011ff',
+        color: '#fbae3c',
     },
     statContent: {},
     statLabel: {
@@ -1407,19 +1608,19 @@ const styles = StyleSheet.create({
         marginLeft: 10,
     },
     mode: {
-        backgroundColor: '#ff9100',
+        backgroundColor: '#fbae3c',
     },
     battery: {
-        backgroundColor: '#ff9100',
+        backgroundColor: '#fbae3c',
     },
     wifi: {
-        backgroundColor: '#ff9100',
+        backgroundColor: '#fbae3c',
     },
     temp: {
-        backgroundColor: '#ff9100',
+        backgroundColor: '#fbae3c',
     },
     food: {
-        backgroundColor: '#ff9100',
+        backgroundColor: '#fbae3c',
     },
     metricInfo: {
         flex: 1,

@@ -29,12 +29,16 @@ interface Pet {
   visit_count: number;
   last_visit_str: string;
   inactive_hours?: number | string;
+  last_fed_timestamp?: number;
+  cooldown_remaining?: number;
+  can_dispense?: boolean;
 }
 
 interface PetsData {
   pet_stats: Record<string, Pet>;
   all_names: string[];
   assigned_names: string[];
+  feeding_interval_hours?: number;
   error?: string;
 }
 
@@ -68,6 +72,8 @@ const PetsScreen = () => {
   const [sortField, setSortField] = useState('inactive');
   const [sortDirection, setSortDirection] = useState('desc');
   const [selectedPet, setSelectedPet] = useState<Pet | null>(null);
+  const [petDetailsModalVisible, setPetDetailsModalVisible] = useState(false);
+  const [selectedPetForDetails, setSelectedPetForDetails] = useState<Pet | null>(null);
   const [newName, setNewName] = useState('');
   const [registerModalVisible, setRegisterModalVisible] = useState(false);
   const [tagRegistrationMode, setTagRegistrationMode] = useState(false);
@@ -208,6 +214,7 @@ const PetsScreen = () => {
       const feedingHistory = deviceData.feeding_history || {};
       const petRegistry = deviceData.pets?.pet_registry || {};
       const lastFedTimes = deviceData.last_fed_times || {};
+      const feedingIntervalHours = deviceData.device_status?.feeding_interval_hours || 4;
       const defaultPetNamesFromFirebase = deviceData.pets?.default_pet_names || [];
 
       if (!defaultPetNamesFromFirebase || defaultPetNamesFromFirebase.length === 0) {
@@ -229,7 +236,7 @@ const PetsScreen = () => {
         assignedNames.push(name as string);
       });
 
-      Object.values(feedingHistory).forEach((feeding: any) => {
+      Object.values(feedingHistory).filter(Boolean).forEach((feeding: any) => {
         if (!feeding?.uid) return;
 
         const uid = feeding.uid.toString();
@@ -250,33 +257,70 @@ const PetsScreen = () => {
         petStats[uid].visit_count++;
 
         if (feeding.timestamp) {
-          const date = new Date(feeding.timestamp);
+          // TEMPORARY FIX: Strip 'Z' and parse as UTC but don't convert timezone
+          // Legacy data has Manila time with "Z" suffix - same logic as analytics
+          const timestampStr = feeding.timestamp.replace(/Z$/i, '');
+          const date = new Date(timestampStr + 'Z'); // Add Z back to parse as UTC
+          
+          // Format without timezone conversion (values are already Manila time)
           petStats[uid].last_visit_str = date.toLocaleString('en-US', {
             month: 'short',
             day: 'numeric',
+            year: 'numeric',
             hour: 'numeric',
             minute: '2-digit',
             hour12: true,
-          });
+            timeZone: 'UTC' // Force UTC to prevent local timezone conversion
+          }).replace(',', ''); // Remove comma after year
         }
       });
 
       const currentTime = Date.now() / 1000;
+      const feedingIntervalSeconds = feedingIntervalHours * 3600;
+      
       Object.values(petStats).forEach((pet) => {
         const lastFed = lastFedTimes[pet.uid];
 
         if (typeof lastFed === 'number') {
           const lastFedTime = lastFed > currentTime * 1000 ? lastFed / 1000 : lastFed;
           pet.inactive_hours = Math.round((currentTime - lastFedTime) / 3600);
+          pet.last_fed_timestamp = lastFedTime;
+          
+          // Calculate cooldown
+          const elapsed = currentTime - lastFedTime;
+          const remaining = feedingIntervalSeconds - elapsed;
+          
+          if (remaining > 0) {
+            pet.cooldown_remaining = Math.ceil(remaining / 60); // Minutes remaining
+            pet.can_dispense = false;
+          } else {
+            pet.cooldown_remaining = 0;
+            pet.can_dispense = true;
+          }
         } else if (typeof lastFed === 'string') {
           const lastFedTime = new Date(lastFed).getTime() / 1000;
           if (!isNaN(lastFedTime)) {
             pet.inactive_hours = Math.round((currentTime - lastFedTime) / 3600);
+            pet.last_fed_timestamp = lastFedTime;
+            
+            // Calculate cooldown
+            const elapsed = currentTime - lastFedTime;
+            const remaining = feedingIntervalSeconds - elapsed;
+            
+            if (remaining > 0) {
+              pet.cooldown_remaining = Math.ceil(remaining / 60); // Minutes remaining
+              pet.can_dispense = false;
+            } else {
+              pet.cooldown_remaining = 0;
+              pet.can_dispense = true;
+            }
           } else {
             pet.inactive_hours = 'Unknown';
+            pet.can_dispense = true;
           }
         } else {
           pet.inactive_hours = 'Unknown';
+          pet.can_dispense = true;
         }
       });
 
@@ -292,6 +336,7 @@ const PetsScreen = () => {
         pet_stats: petStats,
         all_names: allNames as string[],
         assigned_names: assignedNames,
+        feeding_interval_hours: feedingIntervalHours,
       };
     } catch (error) {
       console.error('Error processing pet data:', error);
@@ -343,9 +388,9 @@ const PetsScreen = () => {
   const handleUpdatePetName = async (uid: string, newName: string) => {
     try {
       const updates: { [key: string]: any } = {};
-      const oldNameSnapshot = await get(ref(database, `/devices/kibbler_001/pet_registry/${uid}`));
+      const oldNameSnapshot = await get(ref(database, `/devices/kibbler_001/pets/pet_registry/${uid}`));
       const oldName = oldNameSnapshot.val();
-      updates[`/devices/kibbler_001/pet_registry/${uid}`] = newName;
+      updates[`/devices/kibbler_001/pets/pet_registry/${uid}`] = newName;
       const feedingSnapshot = await get(ref(database, '/devices/kibbler_001/feeding_history'));
       const feedingHistory = feedingSnapshot.val() || {};
       Object.keys(feedingHistory).forEach((key) => {
@@ -542,8 +587,8 @@ const PetsScreen = () => {
                     </Text>
                   </View>
                   <View style={styles.batteryIndicator}>
-                    <FontAwesome5 name={getBatteryIcon(batteryLevel)} size={16} color="#ff9100" style={styles.batteryIcon} />
-                    <Text style={styles.batteryText}>{batteryLevel ?? '--'}%</Text>
+                    <FontAwesome5 name={getBatteryIcon(isDeviceOnline ? batteryLevel : undefined)} size={16} color="#fbae3c" style={styles.batteryIcon} />
+                    <Text style={styles.batteryText}>{isDeviceOnline ? `${batteryLevel ?? '--'}%` : '--'}</Text>
                   </View>
                 </View>
             </View>
@@ -649,20 +694,30 @@ const PetsScreen = () => {
               showsVerticalScrollIndicator={true}
               indicatorStyle="white"
               renderItem={({ item }) => (
-                <View style={styles.tableRow}>
-                  <Text style={[styles.tableCell, styles.rfidColumn]}>{item.uid.substring(0, 8)}</Text>
+                <TouchableOpacity
+                  style={styles.tableRow}
+                  onPress={() => {
+                    setSelectedPetForDetails(item);
+                    setPetDetailsModalVisible(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.tableCell, styles.rfidColumn]}>{item.uid.slice(-8)}</Text>
                   <Text style={[styles.tableCell, styles.nameColumn]}>{item.name}</Text>
                   <Text style={[styles.tableCell, styles.visitsColumn]}>{item.visit_count}</Text>
                   <Text style={[styles.tableCell, styles.lastFedColumn]}>{item.last_visit_str}</Text>
                   <View style={styles.actionColumn}>
                     <TouchableOpacity
                       style={styles.editButton}
-                      onPress={() => setSelectedPet(item)}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setSelectedPet(item);
+                      }}
                     >
                       <Text style={styles.editButtonText}>Edit</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
+                </TouchableOpacity>
               )}
               ListEmptyComponent={
                 <View style={styles.emptyRow}>
@@ -760,7 +815,7 @@ const PetsScreen = () => {
   if (!fontsLoaded || loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#dd2c00" />
+        <ActivityIndicator size="large" color="#fbae3c" />
       </View>
     );
   }
@@ -806,7 +861,7 @@ const PetsScreen = () => {
             onPress={(e) => e.stopPropagation()}
           >
             <Text style={styles.modalTitle}>Edit Pet Name</Text>
-            <Text style={styles.modalSubtitle}>RFID: {selectedPet?.uid.substring(0, 8)}</Text>
+            <Text style={styles.modalSubtitle}>RFID: {selectedPet?.uid.slice(-8)}</Text>
 
             <Text style={styles.modalLabel}>Select Pet Name:</Text>
             <View style={styles.modalPicker} pointerEvents="auto">
@@ -819,10 +874,11 @@ const PetsScreen = () => {
                 items={(data?.all_names || []).map((name) => ({
                   label: name,
                   value: name,
+                  color: '#000000', // Dark text for iOS picker wheel
                 }))}
                 style={{
                   inputIOS: {
-                    color: '#fff',
+                    color: '#c27006ff',
                     fontSize: 16,
                     paddingVertical: 15,
                     paddingHorizontal: 10,
@@ -830,7 +886,7 @@ const PetsScreen = () => {
                     fontFamily: 'Poppins',
                   },
                   inputAndroid: {
-                    color: '#fff',
+                    color: '#c27006ff',
                     fontSize: 16,
                     paddingVertical: 15,
                     paddingHorizontal: 10,
@@ -851,12 +907,17 @@ const PetsScreen = () => {
                 value={selectedPet?.name}
                 placeholder={{ label: 'Select a name', value: '' }}
                 useNativeAndroidPickerStyle={false}
+                pickerProps={{
+                  style: {
+                    backgroundColor: '#f0f0f0', // Light background for iOS picker
+                  }
+                }}
                 touchableWrapperProps={{
                   style: {
                     paddingVertical: Platform.OS === 'android' ? 5 : 0,
                   }
                 }}
-                Icon={() => <FontAwesome5 name="chevron-down" size={16} color="#fff" />}
+                Icon={() => <FontAwesome5 name="chevron-down" size={16} color="#c27006ff" />}
               />
             </View>
 
@@ -869,9 +930,9 @@ const PetsScreen = () => {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalButton, styles.saveButton]}
-                onPress={() => {
+                onPress={async () => {
                   if (selectedPet && selectedPet.name) {
-                    handleUpdatePetName(selectedPet.uid, selectedPet.name);
+                    await handleUpdatePetName(selectedPet.uid, selectedPet.name);
                     setSelectedPet(null);
                   }
                 }}
@@ -937,7 +998,7 @@ const PetsScreen = () => {
                 <View style={styles.detectedTag}>
                   <FontAwesome5 name="check-circle" size={20} color="#4CAF50" />
                   <Text style={styles.detectedTagText}>
-                    Tag Detected: {detectedTag.substring(0, 8)}
+                    Tag Detected: {detectedTag.slice(-8)}
                   </Text>
                 </View>
 
@@ -1055,6 +1116,75 @@ const PetsScreen = () => {
             </View>
           </View>
         </View>
+      </Modal>
+
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={petDetailsModalVisible}
+        onRequestClose={() => setPetDetailsModalVisible(false)}
+        statusBarTranslucent={true}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setPetDetailsModalVisible(false)}
+        >
+          <TouchableOpacity 
+            style={[styles.modalContainer, styles.detailsModalContainer]}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>{selectedPetForDetails?.name}</Text>
+              <Text style={styles.modalSubtitle}>
+                Full UID: {selectedPetForDetails?.uid}
+              </Text>
+
+              <View style={styles.detailsSection}>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Short UID:</Text>
+                  <Text style={styles.detailValue}>...{selectedPetForDetails?.uid.slice(-8)}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Total Visits:</Text>
+                  <Text style={styles.detailValue}>{selectedPetForDetails?.visit_count}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Last Visit:</Text>
+                  <Text style={styles.detailValue}>{selectedPetForDetails?.last_visit_str}</Text>
+                </View>
+                {selectedPetForDetails?.inactive_hours !== 'Unknown' && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Inactive Hours:</Text>
+                    <Text style={styles.detailValue}>{selectedPetForDetails?.inactive_hours}h</Text>
+                  </View>
+                )}
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Feeding Interval:</Text>
+                  <Text style={styles.detailValue}>{data?.feeding_interval_hours || 4} hours</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Dispense Status:</Text>
+                  {selectedPetForDetails?.can_dispense ? (
+                    <Text style={[styles.detailValue, styles.statusReady]}>Ready to dispense</Text>
+                  ) : (
+                    <Text style={[styles.detailValue, styles.statusCooldown]}>
+                      Cooldown: {selectedPetForDetails?.cooldown_remaining} minutes
+                    </Text>
+                  )}
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.modalButton, styles.closeDetailsButton]}
+                onPress={() => setPetDetailsModalVisible(false)}
+              >
+                <Text style={styles.modalButtonText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     </SharedBackground>
   );
@@ -1187,7 +1317,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 7.5,
     height: 35,
-    backgroundColor: '#ff9100',
+    backgroundColor: '#fbae3c',
     borderRadius: 20,
     zIndex: 1,
   },
@@ -1549,7 +1679,7 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   saveButton: {
-    backgroundColor: '#ff9100',
+    backgroundColor: '#fbae3c',
     marginLeft: Platform.OS === 'android' ? 5 : 0,
   },
   deleteButton: {
@@ -1587,7 +1717,7 @@ const styles = StyleSheet.create({
   wave: {
     width: Platform.OS === 'android' ? 8 : 6,
     height: Platform.OS === 'android' ? 25 : 20,
-    backgroundColor: '#dd2c00',
+    backgroundColor: '#fbae3c',
     marginHorizontal: Platform.OS === 'android' ? 4 : 3,
     borderRadius: 3,
   },
@@ -1628,6 +1758,40 @@ const styles = StyleSheet.create({
     flex: 0.8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  detailsModalContainer: {
+    maxHeight: '70%',
+  },
+  detailsSection: {
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  detailLabel: {
+    color: '#aaa',
+    fontFamily: 'Poppins',
+    fontSize: 14,
+  },
+  detailValue: {
+    color: '#fff',
+    fontFamily: 'Poppins-SemiBold',
+    fontSize: 14,
+  },
+  statusReady: {
+    color: '#4CAF50', // Green for ready
+  },
+  statusCooldown: {
+    color: '#FF9800', // Orange for cooldown
+  },
+  closeDetailsButton: {
+    backgroundColor: '#c27006ff',
+    marginTop: 10,
   },
 });
 

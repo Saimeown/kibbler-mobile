@@ -311,7 +311,7 @@ const SettingsScreen = () => {
   if (!fontsLoaded || loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#dd2c00" />
+        <ActivityIndicator size="large" color="#fbae3c" />
       </View>
     );
   }
@@ -465,7 +465,7 @@ const SettingsScreen = () => {
               onPress={handleLogout}
               accessibilityLabel="Logout"
             >
-              <Ionicons name="log-out" size={16} color="#ff9100" />
+              <Ionicons name="log-out" size={16} color="#fbae3c" />
               <Text style={styles.logoutButtonText}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -743,7 +743,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center'
   },
   logoutButtonText: {
-    color: '#ff9100',
+    color: '#fbae3c',
     fontFamily: 'Poppins-SemiBold',
     fontSize: 14,
     marginLeft: 10,

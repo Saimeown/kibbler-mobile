@@ -26,6 +26,15 @@ declare global {
   }
 }
 
+// Define getWeekNumber before it's used
+Date.prototype.getWeekNumber = function (): number {
+  const d = new Date(Date.UTC(this.getFullYear(), this.getMonth(), this.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+};
+
 interface Feeding {
   date?: string;
   timestamp?: string;
@@ -36,7 +45,9 @@ interface Feeding {
 interface DeviceData {
   feeding_history?: { [key: string]: Feeding };
   history?: { daily?: any };
-  pet_registry?: { [key: string]: string };
+  pets?: {
+    pet_registry?: { [key: string]: string };
+  };
   device_status?: {
     battery_level?: number;
   };
@@ -49,8 +60,9 @@ interface AnalyticsData {
   last_visit_times: { [uid: string]: { name: string; time: string; timestamp: number } };
   new_tags_this_week: { [uid: string]: { name: string; first_seen: string } };
   most_frequent_visitor: { name: string; count: number } | null;
-  most_inactive_pet: { name: string; hours: number } | null;
-  visit_rate_change: number;
+  average_daily_feedings: number;
+  average_grams_weekly: number;
+  average_kg_weekly: number;
   unique_pets: { [uid: string]: string };
   feeding_history: { [key: string]: Feeding };
   daily_history: any;
@@ -127,49 +139,75 @@ const AnalyticsScreen = () => {
   }, [activeSubtab, tabLayouts]);
 
   useEffect(() => {
+    console.log('Analytics: Setting up Firebase listener...');
     const dbRef = ref(database, '/devices/kibbler_001');
+    
+    // Add timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      console.log('Analytics: Loading timeout - forcing error state');
+      if (loading) {
+        setData({ error: 'Loading timeout - please check your connection' } as AnalyticsData);
+        setLoading(false);
+      }
+    }, 10000); // 10 second timeout
 
     const unsubscribe = onValue(dbRef, (snapshot) => {
-      const firebaseData = snapshot.val();
-      if (firebaseData) {
-        const processedData = processAnalyticsData(firebaseData);
-        setData(processedData);
-      } else {
-        setData({ error: 'Could not load analytics data' } as AnalyticsData);
+      try {
+        clearTimeout(timeoutId); // Clear timeout when data arrives
+        console.log('Analytics: Firebase data received');
+        const firebaseData = snapshot.val();
+        if (firebaseData) {
+          console.log('Analytics: Processing data...');
+          const processedData = processAnalyticsData(firebaseData);
+          console.log('Analytics: Data processed successfully');
+          setData(processedData);
+        } else {
+          console.log('Analytics: No Firebase data');
+          setData({ error: 'Could not load analytics data' } as AnalyticsData);
+        }
+        setLoading(false);
+        console.log('Analytics: Loading complete');
+      } catch (error) {
+        clearTimeout(timeoutId);
+        console.error('Analytics: Error processing data:', error);
+        setData({ error: 'Error processing analytics data: ' + error } as AnalyticsData);
+        setLoading(false);
       }
-      setLoading(false);
     }, (error) => {
+      clearTimeout(timeoutId);
       console.error('Firebase error:', error);
       setData({ error: 'Could not load analytics data' } as AnalyticsData);
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      clearTimeout(timeoutId);
+      unsubscribe();
+    };
   }, []);
 
   const processAnalyticsData = (deviceData: DeviceData): AnalyticsData => {
-    const feedingHistory = deviceData.feeding_history || {};
-    const dailyHistory = deviceData.history?.daily || {};
-    const petRegistry = deviceData.pet_registry || {};
+    try {
+      console.log('processAnalyticsData: Starting...');
+      const feedingHistory = deviceData.feeding_history || {};
+      const dailyHistory = deviceData.history?.daily || {};
+      const petRegistry = deviceData.pets?.pet_registry || {};
+      
+      console.log('processAnalyticsData: feedingHistory count:', Object.keys(feedingHistory).length);
+      console.log('processAnalyticsData: petRegistry count:', Object.keys(petRegistry).length);
 
-    const uniquePets: { [uid: string]: string } = {};
-    
-    Object.entries(petRegistry).forEach(([uid, name]) => {
-      uniquePets[uid] = name as string;
-    });
-    
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
-      if (feeding.uid) {
-        const uid = feeding.uid.toString();
-        const petName = petRegistry[uid] || feeding.pet_name || 'Unknown';
-        
-        uniquePets[uid] = petName;
-      }
-    });
+      // Use ONLY pet_registry (don't overwrite with feeding_history)
+      const uniquePets: { [uid: string]: string } = {};
+      
+      Object.entries(petRegistry).forEach(([uid, name]) => {
+        uniquePets[uid] = name as string;
+      });
+      
+      console.log('processAnalyticsData: uniquePets count:', Object.keys(uniquePets).length);
 
     const visitsPerPetPerDay: { [date: string]: { [uid: string]: { count: number; name: string } } } = {};
     const today = new Date().toISOString().split('T')[0];
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
       if (!feeding.date || !feeding.uid) return;
 
       const date = feeding.date;
@@ -190,15 +228,22 @@ const AnalyticsScreen = () => {
     });
 
     const visitsPerPetPerWeek: { [uid: string]: { count: number; name: string } } = {};
-    const currentWeek = new Date().getWeekNumber();
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
+    // Calculate this week's Monday 00:00:00
+    const thisWeekMonday = new Date();
+    const dayOfWeekForVisits = thisWeekMonday.getDay();
+    const daysToMondayForVisits = dayOfWeekForVisits === 0 ? 6 : dayOfWeekForVisits - 1;
+    thisWeekMonday.setDate(thisWeekMonday.getDate() - daysToMondayForVisits);
+    thisWeekMonday.setHours(0, 0, 0, 0);
+    const thisWeekMondayTimestamp = thisWeekMonday.getTime() / 1000;
+    
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
       if (!feeding.timestamp || !feeding.uid) return;
 
       const timestamp = new Date(feeding.timestamp).getTime() / 1000;
-      const weekNumber = new Date(timestamp * 1000).getWeekNumber();
       const petId = feeding.uid;
 
-      if (weekNumber !== currentWeek) return;
+      // Only count if timestamp is on or after this Monday
+      if (timestamp < thisWeekMondayTimestamp) return;
 
       if (!visitsPerPetPerWeek[petId]) {
         visitsPerPetPerWeek[petId] = {
@@ -211,7 +256,7 @@ const AnalyticsScreen = () => {
     });
 
     const hourlyCounts = Array(24).fill(0);
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
       if (!feeding.timestamp) return;
 
       const hour = new Date(feeding.timestamp).getUTCHours();
@@ -228,7 +273,7 @@ const AnalyticsScreen = () => {
       lastVisitTimes[uid] = { name, time: 'Never', timestamp: 0 };
     });
 
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
       if (!feeding.uid || !feeding.timestamp) return;
 
       const uid = feeding.uid;
@@ -247,12 +292,15 @@ const AnalyticsScreen = () => {
 
     const newTagsThisWeek: { [uid: string]: { name: string; first_seen: string } } = {};
     const weekStart = new Date();
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    // Get Monday of current week (0 = Sunday, 1 = Monday, etc.)
+    const dayOfWeek = weekStart.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday (0), go back 6 days to Monday
+    weekStart.setDate(weekStart.getDate() - daysToMonday);
     weekStart.setHours(0, 0, 0, 0);
     const weekStartTimestamp = weekStart.getTime() / 1000;
     const allTimeTags: { [uid: string]: boolean } = {};
 
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
       if (!feeding.timestamp || !feeding.uid) return;
 
       const timestamp = new Date(feeding.timestamp).getTime() / 1000;
@@ -261,7 +309,7 @@ const AnalyticsScreen = () => {
       }
     });
 
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
       if (!feeding.timestamp || !feeding.uid) return;
 
       const timestamp = new Date(feeding.timestamp).getTime() / 1000;
@@ -281,7 +329,7 @@ const AnalyticsScreen = () => {
       uid
     }));
 
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
       if (!feeding.uid) return;
       const visitor = visitCounts.find(v => v.uid === feeding.uid);
       if (visitor) visitor.count++;
@@ -289,31 +337,43 @@ const AnalyticsScreen = () => {
 
     const mostFrequentVisitor = visitCounts.sort((a, b) => b.count - a.count)[0] || null;
 
-    const currentTime = Date.now() / 1000;
-    const inactivePets = Object.entries(lastVisitTimes).map(([uid, data]) => ({
-      name: data.name,
-      hours: Math.round((currentTime - data.timestamp) / 3600)
-    }));
-
-    const mostInactivePet = inactivePets.sort((a, b) => b.hours - a.hours)[0] || null;
-
-    let currentWeekCount = 0;
-    let lastWeekCount = 0;
-    const lastWeekStart = new Date(weekStart);
-    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
-
-    Object.values(feedingHistory).forEach((feeding: Feeding) => {
-      if (!feeding.timestamp) return;
-
+    // Calculate average daily feedings (last 7 days) - only registered pets
+    let last7DaysCount = 0;
+    const sevenDaysAgo = Date.now() / 1000 - (7 * 24 * 60 * 60);
+    
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
+      if (!feeding.timestamp || !feeding.uid) return;
+      if (!uniquePets[feeding.uid]) return; // Only registered pets
+      
       const timestamp = new Date(feeding.timestamp).getTime() / 1000;
-      if (timestamp >= weekStartTimestamp) {
-        currentWeekCount++;
-      } else if (timestamp >= lastWeekStart.getTime() / 1000 && timestamp < weekStartTimestamp) {
-        lastWeekCount++;
+      if (timestamp >= sevenDaysAgo) {
+        last7DaysCount++;
       }
     });
+    
+    const averageDailyFeedings = parseFloat((last7DaysCount / 7).toFixed(1));
 
-    const visitRateChange = lastWeekCount > 0 ? Math.round((currentWeekCount - lastWeekCount) / lastWeekCount * 100) : 0;
+    // Calculate average grams dispensed per week (last 7 days) - only registered pets
+    let totalGramsLast7Days = 0;
+    
+    Object.values(feedingHistory).filter(Boolean).forEach((feeding: Feeding) => {
+      if (!feeding.timestamp || !feeding.uid) return;
+      if (!uniquePets[feeding.uid]) return; // Only registered pets
+      
+      const timestamp = new Date(feeding.timestamp).getTime() / 1000;
+      if (timestamp >= sevenDaysAgo) {
+        // Get dispense amount (use dispense_amount field if available, otherwise 100%)
+        const dispenseAmount = (feeding as any).dispense_amount || 100;
+        
+        // Convert dispense amount percentage to grams
+        // 25% = 75g, 50% = 150g, 75% = 225g, 100% = 300g
+        const grams = (dispenseAmount / 100) * 300;
+        totalGramsLast7Days += grams;
+      }
+    });
+    
+    const averageGramsWeekly = Math.round(totalGramsLast7Days);
+    const averageKgWeekly = parseFloat((totalGramsLast7Days / 1000).toFixed(2));
 
     return {
       visits_per_pet_per_day: visitsPerPetPerDay,
@@ -322,25 +382,22 @@ const AnalyticsScreen = () => {
       last_visit_times: lastVisitTimes,
       new_tags_this_week: newTagsThisWeek,
       most_frequent_visitor: mostFrequentVisitor,
-      most_inactive_pet: mostInactivePet,
-      visit_rate_change: visitRateChange,
+      average_daily_feedings: averageDailyFeedings,
+      average_grams_weekly: averageGramsWeekly,
+      average_kg_weekly: averageKgWeekly,
       unique_pets: uniquePets,
       feeding_history: feedingHistory,
       daily_history: dailyHistory,
       device_status: { 
         ...deviceData.device_status, 
-        battery_level: batteryLevel,
+        battery_level: batteryLevel ?? undefined,
         status: isDeviceOnline ? 'online' : 'offline' 
       }
     };
-  };
-
-  Date.prototype.getWeekNumber = function (): number {
-    const d = new Date(Date.UTC(this.getFullYear(), this.getMonth(), this.getDate()));
-    const dayNum = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+    } catch (error) {
+      console.error('processAnalyticsData: Error occurred:', error);
+      throw error;
+    }
   };
 
   const getBatteryIcon = (level?: number) => {
@@ -362,7 +419,7 @@ const AnalyticsScreen = () => {
   const rangeCounts: { [key: string]: number } = Object.keys(ranges).reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
   let totalFeedings = 0;
 
-  Object.values(data?.feeding_history || {}).forEach((feeding: Feeding) => {
+  Object.values(data?.feeding_history || {}).filter(Boolean).forEach((feeding: Feeding) => {
     if (!feeding.timestamp) return;
     try {
       const hour = new Date(feeding.timestamp).getUTCHours();
@@ -379,18 +436,21 @@ const AnalyticsScreen = () => {
   });
 
   const hourlyData = Array(24).fill(0);
-  Object.values(data?.feeding_history || {}).forEach((feeding: Feeding) => {
+  Object.values(data?.feeding_history || {}).filter(Boolean).forEach((feeding: Feeding) => {
     if (feeding.timestamp) {
       const hour = new Date(feeding.timestamp).getUTCHours();
       hourlyData[hour]++;
     }
   });
 
+  // Generate dates for current week (Monday to Sunday)
   const dates = Array.from({ length: 7 }, (_, i) => {
     const date = new Date();
-    date.setDate(date.getDate() - i);
+    const dayOfWeek = date.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday (0), go back 6 days to Monday
+    date.setDate(date.getDate() - daysToMonday + i); // Start from Monday, add i days
     return date.toISOString().split('T')[0];
-  }).reverse();
+  });
 
   const handleTabPress = (tabName: string) => {
     setActiveSubtab(tabName);
@@ -439,7 +499,7 @@ const AnalyticsScreen = () => {
   if (!fontsLoaded || loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#dd2c00" />
+        <ActivityIndicator size="large" color="#fbae3c" />
       </View>
     );
   }
@@ -483,8 +543,8 @@ const AnalyticsScreen = () => {
                     </Text>
                   </View>
                   <View style={styles.batteryIndicator}>
-                    <FontAwesome5 name={getBatteryIcon(batteryLevel)} size={16} color="#ff9100" style={styles.batteryIcon} />
-                    <Text style={styles.batteryText}>{batteryLevel ?? '--'}%</Text>
+                    <FontAwesome5 name={getBatteryIcon(isDeviceOnline ? batteryLevel ?? undefined : undefined)} size={16} color="#fbae3c" style={styles.batteryIcon} />
+                    <Text style={styles.batteryText}>{isDeviceOnline ? `${batteryLevel ?? '--'}%` : '--'}</Text>
                   </View>
                 </View>
             </View>
@@ -594,7 +654,7 @@ const AnalyticsScreen = () => {
                         propsForDots: {
                           r: "6",
                           strokeWidth: "2",
-                          stroke: "#ff9100"
+                          stroke: "#fbae3c"
                         }
                       }}
                       bezier
@@ -759,15 +819,27 @@ const AnalyticsScreen = () => {
                     <FontAwesome5 name="calendar" style={[styles.statIcon, styles.yellow]} />
                     <FontAwesome5
                       name="chart-line"
-                      style={[styles.statTrend, data?.visit_rate_change && data.visit_rate_change >= 0 ? styles.yellow : styles.yellow]}
+                      style={[styles.statTrend, styles.yellow]}
                     />
                   </View>
                   <View style={styles.statContent}>
-                    <Text style={styles.statLabel}>Visit Rate Change</Text>
-                    <Text style={styles.statValue}>{data?.visit_rate_change ? Math.abs(data.visit_rate_change) : 0}%</Text>
-                    <Text style={[styles.statChange, data?.visit_rate_change && data.visit_rate_change >= 0 ? styles.yellow : styles.gold]}>
-                      {data?.visit_rate_change && data.visit_rate_change >= 0 ? 'Up' : 'Down'} from last week
+                    <Text style={styles.statLabel}>Average Daily Feedings</Text>
+                    <Text style={styles.statValue}>{data?.average_daily_feedings || 0}</Text>
+                    <Text style={[styles.statChange, styles.gold]}>
+                      Last 7 days
                     </Text>
+                  </View>
+                </View>
+
+                <View style={styles.statCard}>
+                  <View style={styles.statHeader}>
+                    <FontAwesome5 name="clock" style={[styles.statIcon, styles.yellow]} />
+                    <FontAwesome5 name="weight" style={[styles.statTrend, styles.yellow]} />
+                  </View>
+                  <View style={styles.statContent}>
+                    <Text style={styles.statLabel}>Average Grams Weekly</Text>
+                    <Text style={styles.statValue}>{data?.average_grams_weekly?.toLocaleString() || 0} g</Text>
+                    <Text style={[styles.statChange, styles.gold]}>{data?.average_kg_weekly || 0}kg per week</Text>
                   </View>
                 </View>
 
@@ -780,18 +852,6 @@ const AnalyticsScreen = () => {
                     <Text style={styles.statLabel}>Most Frequent Visitor</Text>
                     <Text style={styles.statValue}>{data?.most_frequent_visitor?.name || '--'}</Text>
                     <Text style={[styles.statChange, styles.gold]}>{data?.most_frequent_visitor?.count || 0} visits</Text>
-                  </View>
-                </View>
-
-                <View style={styles.statCard}>
-                  <View style={styles.statHeader}>
-                    <FontAwesome5 name="clock" style={[styles.statIcon, styles.yellow]} />
-                    <FontAwesome5 name="bed" style={[styles.statTrend, styles.yellow]} />
-                  </View>
-                  <View style={styles.statContent}>
-                    <Text style={styles.statLabel}>Most Inactive Pet</Text>
-                    <Text style={styles.statValue}>{data?.most_inactive_pet?.name || '--'}</Text>
-                    <Text style={[styles.statChange, styles.negative]}>{data?.most_inactive_pet?.hours || 0}h inactive</Text>
                   </View>
                 </View>
 
@@ -839,7 +899,7 @@ const AnalyticsScreen = () => {
                       if (a.time === 'Never' && b.time === 'Never') return 0;
                       if (a.time === 'Never') return 1;
                       if (b.time === 'Never') return -1;
-                      return b.timestamp - a.timestamp;
+                      return (b.timestamp || 0) - (a.timestamp || 0);
                     })
                     .map((pet, index) => (
                     <View key={index} style={styles.lastSeenItem}>
@@ -988,7 +1048,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 7.5,
     height: 35,
-    backgroundColor: '#ff9100',
+    backgroundColor: '#fbae3c',
     borderRadius: 20,
     zIndex: 1,
   },
@@ -1060,7 +1120,7 @@ const styles = StyleSheet.create({
     color: '#FFC107',
   },
   gold: {
-    color: '#ff9100',
+    color: '#fbae3c',
   },
   blue: {
     color: '#2196F3',
@@ -1092,7 +1152,7 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
   },
   negative: {
-    color: '#ff9100',
+    color: '#fbae3c',
   },
   panel: {
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1235,7 +1295,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   feedingIcon: {
-    backgroundColor: '#dd2c00',
+    backgroundColor: '#fbae3c',
   },
   activityContent: {
     flex: 1,
@@ -1356,7 +1416,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   timeRangeCount: {
-    color: '#ff9100',
+    color: '#fbae3c',
     fontFamily: 'Poppins-Bold',
     fontSize: 20,
   },

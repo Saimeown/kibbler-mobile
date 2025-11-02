@@ -4,74 +4,70 @@ import { database } from '../config/firebase';
 
 interface DeviceOnlineStatus {
   isDeviceOnline: boolean;
-  lastBatteryUpdate: number;
-  batteryLevel: number;
+  batteryLevel: number | null;
 }
 
 export const useDeviceOnlineStatus = (): DeviceOnlineStatus => {
-  const [lastBatteryUpdate, setLastBatteryUpdate] = useState<number>(Date.now());
-  const [isDeviceOnline, setIsDeviceOnline] = useState(true);
-  const [previousBatteryLevel, setPreviousBatteryLevel] = useState<number | null>(null);
-  const [batteryLevel, setBatteryLevel] = useState<number>(0);
+  const [isDeviceOnline, setIsDeviceOnline] = useState(false);
+  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
+  const [lastSeenTime, setLastSeenTime] = useState<number>(Date.now());
   
-  // Configuration for offline detection (in milliseconds)
-  const OFFLINE_TIMEOUT = 120000; // 2 minutes - adjust as needed
+  // MATCHES WEB: 120 second threshold
+  const OFFLINE_THRESHOLD_SECONDS = 120;
 
-  // Monitor device online status based on battery data updates
+  // Monitor device_status for last_seen updates (MATCHES WEB LOGIC)
+  useEffect(() => {
+    const deviceStatusRef = ref(database, '/devices/kibbler_001/device_status');
+    
+    const unsubscribe = onValue(deviceStatusRef, (snapshot) => {
+      const deviceStatus = snapshot.val();
+      
+      if (deviceStatus && deviceStatus.last_seen) {
+        const lastSeen = new Date(deviceStatus.last_seen).getTime();
+        const now = Date.now();
+        const secondsSinceLastSeen = (now - lastSeen) / 1000;
+        
+        const isOnline = secondsSinceLastSeen < OFFLINE_THRESHOLD_SECONDS;
+        
+        console.log('Device Status Check:', {
+          lastSeen: new Date(lastSeen).toISOString(),
+          secondsSinceLastSeen: Math.round(secondsSinceLastSeen),
+          isOnline,
+          threshold: OFFLINE_THRESHOLD_SECONDS
+        });
+        
+        setIsDeviceOnline(isOnline);
+        setLastSeenTime(lastSeen);
+        
+        // Update battery level
+        if (deviceStatus.battery_level !== undefined && deviceStatus.battery_level !== null) {
+          setBatteryLevel(deviceStatus.battery_level);
+        }
+      }
+    }, (error) => {
+      console.error('Device status listener error:', error);
+      setIsDeviceOnline(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Periodic check (every 10 seconds) to update online status
   useEffect(() => {
     const checkOnlineStatus = () => {
       const now = Date.now();
-      const timeSinceLastUpdate = now - lastBatteryUpdate;
-      const isOnline = timeSinceLastUpdate < OFFLINE_TIMEOUT;
-      
-      console.log('Shared Online status check:', {
-        timeSinceLastUpdate: Math.round(timeSinceLastUpdate / 1000) + 's',
-        isOnline,
-        threshold: OFFLINE_TIMEOUT / 1000 + 's'
-      });
+      const secondsSinceLastSeen = (now - lastSeenTime) / 1000;
+      const isOnline = secondsSinceLastSeen < OFFLINE_THRESHOLD_SECONDS;
       
       setIsDeviceOnline(isOnline);
     };
 
-    // Check immediately and then every 10 seconds
-    checkOnlineStatus();
     const interval = setInterval(checkOnlineStatus, 10000);
-
     return () => clearInterval(interval);
-  }, [lastBatteryUpdate, OFFLINE_TIMEOUT]);
-
-  // Separate listener for battery level changes to track real-time updates
-  useEffect(() => {
-    const batteryRef = ref(database, '/devices/kibbler_001/device_status/battery_level');
-    
-    const unsubscribeBattery = onValue(batteryRef, (snapshot) => {
-      const newBatteryLevel = snapshot.val();
-      if (newBatteryLevel !== null && newBatteryLevel !== undefined) {
-        const now = Date.now();
-        
-        // Only update if battery level actually changed
-        if (previousBatteryLevel !== null && newBatteryLevel !== previousBatteryLevel) {
-          console.log('Shared - Battery level changed:', {
-            previous: previousBatteryLevel,
-            current: newBatteryLevel,
-            timestamp: new Date(now).toLocaleTimeString()
-          });
-          setLastBatteryUpdate(now);
-        }
-        
-        setPreviousBatteryLevel(newBatteryLevel);
-        setBatteryLevel(newBatteryLevel);
-      }
-    }, (error) => {
-      console.error('Shared - Battery listener error:', error);
-    });
-
-    return () => unsubscribeBattery();
-  }, [previousBatteryLevel]);
+  }, [lastSeenTime]);
 
   return {
     isDeviceOnline,
-    lastBatteryUpdate,
     batteryLevel
   };
 };
