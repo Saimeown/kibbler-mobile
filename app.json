@@ -5,7 +5,7 @@
     "scheme": "kibbler",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/favicon.png",
+    "icon": "./assets/Paw-Logo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -17,9 +17,13 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.kibbler.app",
+      "versionCode": 2,
+      "icon": "./assets/Paw-Logo.png",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/splash-icon.png",
+        "backgroundColor": "#FF9100",
+        "monochromeImage": "./assets/splash-icon.png"
       },
       "edgeToEdgeEnabled": true
     },
@@ -29,6 +33,12 @@
     "plugins": [
       "expo-router",
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "433e4432-2761-4d30-9bb5-0c2fb1753156"
+      }
+    }
   }
 }
