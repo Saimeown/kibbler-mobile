@@ -663,7 +663,10 @@ const HomeScreen = () => {
             if (typeof timestamp === 'number') {
                 date = new Date(timestamp < 10000000000 ? timestamp * 1000 : timestamp);
             } else if (typeof timestamp === 'string') {
-                date = new Date(timestamp);
+                // LEGACY FIX: Firebase stores Manila time with 'Z' suffix (incorrectly marked as UTC)
+                // Remove 'Z' and parse as local Manila time to avoid timezone conversion
+                const cleanTimestamp = timestamp.replace(/Z$/i, '');
+                date = new Date(cleanTimestamp);
                 if (isNaN(date.getTime())) {
                     // Try to parse "Today, 10:37 PM" or "Yesterday, 10:37 PM" format
                     const relativeMatch = timestamp.match(/^(Today|Yesterday),\s(\d{1,2}):(\d{2})\s(AM|PM)$/i);
@@ -762,6 +765,11 @@ const HomeScreen = () => {
     };
 
     const formatWifiSignal = (rssi: string | number): string => {
+        // Show "--" when device is offline
+        if (!isDeviceOnline) {
+            return '--';
+        }
+        
         if (typeof rssi === 'number') {
             if (rssi >= -50) return 'Excellent';
             if (rssi >= -60) return 'Strong';
@@ -897,7 +905,7 @@ const HomeScreen = () => {
 
                     <View style={styles.metric}>
                         <View style={[styles.metricIcon, styles.battery]}>
-                            <FontAwesome5 name={getBatteryIcon(data.device_status.battery_level)} size={16} color="#fff" />
+                            <FontAwesome5 name={isDeviceOnline ? getBatteryIcon(data.device_status.battery_level) : getBatteryIcon(0)} size={16} color="#fff" />
                         </View>
                         <View style={styles.metricInfo}>
                             <View style={styles.metricRow}>
@@ -1234,7 +1242,7 @@ const HomeScreen = () => {
                                         </Text>
                                     </View>
                                     <View style={styles.batteryIndicator}>
-                                        <FontAwesome5 name={getBatteryIcon(data?.device_status.battery_level || 0)} size={16} color="#fbae3c" style={styles.batteryIcon} />
+                                        <FontAwesome5 name={isDeviceOnline ? getBatteryIcon(data?.device_status.battery_level || 0) : getBatteryIcon(0)} size={16} color="#fbae3c" style={styles.batteryIcon} />
                                         <Text style={styles.batteryText}>
                                             {isDeviceOnline && data?.device_status.battery_level !== undefined 
                                                 ? `${data.device_status.battery_level}%` 

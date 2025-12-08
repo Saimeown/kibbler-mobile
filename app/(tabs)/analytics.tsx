@@ -199,8 +199,13 @@ const AnalyticsScreen = () => {
       // Use ONLY pet_registry (don't overwrite with feeding_history)
       const uniquePets: { [uid: string]: string } = {};
       
-      Object.entries(petRegistry).forEach(([uid, name]) => {
-        uniquePets[uid] = name as string;
+      Object.entries(petRegistry).forEach(([uid, data]) => {
+        // Handle both old format (string) and new format (object with name + portion_size)
+        if (typeof data === 'string') {
+          uniquePets[uid] = data;
+        } else if (typeof data === 'object' && data !== null) {
+          uniquePets[uid] = (data as any).name || 'Unknown';
+        }
       });
       
       console.log('processAnalyticsData: uniquePets count:', Object.keys(uniquePets).length);

@@ -78,6 +78,37 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
     }
   }, [toast]);
 
+  const formatNotificationTime = (timestamp: string): string => {
+    const now = new Date();
+    
+    // LEGACY FIX: Firebase stores Manila time with 'Z' suffix (incorrectly marked as UTC)
+    // Remove 'Z' and parse as local Manila time to avoid timezone conversion
+    const cleanTimestamp = timestamp.replace(/Z$/i, '');
+    const past = new Date(cleanTimestamp);
+    
+    // Get start of today (midnight)
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfPastDay = new Date(past.getFullYear(), past.getMonth(), past.getDate());
+    
+    // Calculate calendar days difference
+    const daysDiff = Math.floor((startOfToday.getTime() - startOfPastDay.getTime()) / 86400000);
+    
+    const diffMs = now.getTime() - past.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    
+    // If same day, show hours
+    if (daysDiff === 0) return `${diffHours}h ago`;
+    
+    // If different days, show days
+    if (daysDiff < 30) return `${daysDiff}d ago`;
+    
+    return 'Over a month ago';
+  };
+
   const processDeviceNotifications = (deviceData: any) => {
     const newNotifications: Notification[] = [];
     const readStatus = deviceData.notifications?.read_status || {};
@@ -127,17 +158,47 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
       });
     }
 
-    const activities = deviceData.recent_activities || {};
-    Object.entries(activities).forEach(([timestamp, activity]: [string, any]) => {
-      const activityTimestamp = activity.timestamp || timestamp;
-      const id = `activity_${activityTimestamp}`;
+    // Process activities from feeding_history (more reliable than recent_activities)
+    const feedingHistory = deviceData.feeding_history || {};
+    const petRegistry = deviceData.pets?.pet_registry || {};
+    
+    // Helper to extract pet name from registry (handles both string and object formats)
+    const getPetNameFromRegistry = (uid: string) => {
+      if (!petRegistry[uid]) return null;
+      const entry = petRegistry[uid];
+      return typeof entry === 'object' ? entry.name : entry;
+    };
+    
+    Object.entries(feedingHistory).forEach(([timestamp, feeding]: [string, any]) => {
+      const id = `activity_${timestamp}`;
+      let petName = feeding.pet_name;
+      const uid = feeding.uid;
+      
+      // Skip Unknown or missing pets
+      if (petName === 'Unknown' || !petName) {
+        return;
+      }
+      
+      // Skip deleted pets (not in current registry)
+      if (uid && !petRegistry[uid]) {
+        return;
+      }
+      
+      // Use current name if pet was renamed
+      if (uid && petRegistry[uid]) {
+        const currentName = getPetNameFromRegistry(uid);
+        if (currentName) {
+          petName = currentName;
+        }
+      }
+      
       newNotifications.push({
         id,
         type: 'activity',
-        title: activity.pet_name ? `${activity.pet_name}'s Activity` : 'Feeding Activity',
-        message: activity.message || 'Activity recorded',
-        timestamp: activityTimestamp,
-        pet_name: activity.pet_name || undefined,
+        title: `${petName}'s Feeding`,
+        message: `Fed ${petName} ${feeding.dispense_amount || '?'}% portion`,
+        timestamp: feeding.timestamp || timestamp,
+        pet_name: petName,
         read: readStatus[id] || false,
         icon: 'paw',
       });
@@ -145,17 +206,6 @@ const NotificationsScreen = ({ navigation }: NotificationsScreenProps) => {
 
     newNotifications.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     setNotifications(newNotifications);
-  };
-
-  const formatNotificationTime = (timestamp: string) => {
-    const now = new Date();
-    const date = new Date(timestamp);
-    const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
-
-    if (diff < 60) return 'Just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   const markNotificationRead = (id: string) => {

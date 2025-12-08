@@ -26,6 +26,7 @@ import { useDeviceOnlineStatus } from '../../hooks/useDeviceOnlineStatus';
 interface Pet {
   uid: string;
   name: string;
+  portion_size?: string; // 'default', '25', '50', '75', '100'
   visit_count: number;
   last_visit_str: string;
   inactive_hours?: number | string;
@@ -82,6 +83,7 @@ const PetsScreen = () => {
   const [nameToDelete, setNameToDelete] = useState<string | null>(null);
   const [registerButtonText, setRegisterButtonText] = useState('Register');
   const [activeTab, setActiveTab] = useState('Pet Management');
+  const [selectedPortionSize, setSelectedPortionSize] = useState('default');
   
   const { isDeviceOnline, batteryLevel } = useDeviceOnlineStatus();
   const isManualScrollRef = useRef(false);
@@ -225,27 +227,52 @@ const PetsScreen = () => {
       const petStats: Record<string, Pet> = {};
       const assignedNames: string[] = [];
 
-      Object.entries(petRegistry).forEach(([uid, name]) => {
+      Object.entries(petRegistry).forEach(([uid, data]) => {
         const uidStr = uid.toString();
+        let name: string;
+        let portionSize: string = 'default';
+        
+        // Support both old format (string) and new format (object)
+        if (typeof data === 'string') {
+          name = data;
+        } else if (typeof data === 'object' && data !== null) {
+          name = (data as any).name || 'Unknown';
+          portionSize = (data as any).portion_size || 'default';
+        } else {
+          return;
+        }
+        
         petStats[uidStr] = {
           uid: uidStr,
-          name: name as string,
+          name: name,
+          portion_size: portionSize,
           visit_count: 0,
           last_visit_str: 'Never',
         };
-        assignedNames.push(name as string);
+        assignedNames.push(name);
       });
 
       Object.values(feedingHistory).filter(Boolean).forEach((feeding: any) => {
         if (!feeding?.uid) return;
 
         const uid = feeding.uid.toString();
-        const petName = petRegistry[uid] || feeding.pet_name || 'Unknown';
+        
+        // Extract pet name from registry (handle both string and object formats)
+        let petName = 'Unknown';
+        const registryData = petRegistry[uid];
+        if (typeof registryData === 'string') {
+          petName = registryData;
+        } else if (typeof registryData === 'object' && registryData !== null) {
+          petName = (registryData as any).name || 'Unknown';
+        } else if (feeding.pet_name) {
+          petName = feeding.pet_name;
+        }
 
         if (!petStats[uid]) {
           petStats[uid] = {
             uid,
             name: petName,
+            portion_size: 'default',
             visit_count: 0,
             last_visit_str: 'Never',
           };
@@ -324,7 +351,19 @@ const PetsScreen = () => {
         }
       });
 
-      const registryNames = Object.values(petRegistry);
+      // Extract names from registry (handle both string and object formats)
+      const registryNames: string[] = [];
+      Object.values(petRegistry).forEach((data) => {
+        if (typeof data === 'string') {
+          registryNames.push(data);
+        } else if (typeof data === 'object' && data !== null) {
+          const name = (data as any).name;
+          if (name && typeof name === 'string') {
+            registryNames.push(name);
+          }
+        }
+      });
+      
       const allNames = Array.from(
         new Set([
           ...(defaultPetNamesFromFirebase.length > 0 ? defaultPetNamesFromFirebase : defaultPetNames),
@@ -531,6 +570,38 @@ const PetsScreen = () => {
     }
   };
 
+  const updatePetPortion = async () => {
+    if (!selectedPetForDetails) {
+      alert('No pet selected');
+      return;
+    }
+
+    try {
+      const petRef = ref(database, `/devices/kibbler_001/pets/pet_registry/${selectedPetForDetails.uid}`);
+      const snapshot = await get(petRef);
+      const currentData = snapshot.val();
+
+      let petName = 'Unknown';
+      if (typeof currentData === 'string') {
+        petName = currentData;
+      } else if (typeof currentData === 'object' && currentData !== null) {
+        petName = (currentData as any).name || 'Unknown';
+      }
+
+      // Update with new portion size
+      await set(petRef, {
+        name: petName,
+        portion_size: selectedPortionSize
+      });
+
+      alert('Portion size updated successfully!');
+      setPetDetailsModalVisible(false);
+    } catch (error) {
+      console.error('Error updating portion:', error);
+      alert('Failed to update portion size');
+    }
+  };
+
   const sortedPets = React.useMemo(() => {
     if (!data?.pet_stats) return [];
 
@@ -683,6 +754,7 @@ const PetsScreen = () => {
             <View style={styles.tableHeader}>
               <Text style={[styles.tableHeaderCell, styles.rfidColumn]}>RFID Tag</Text>
               <Text style={[styles.tableHeaderCell, styles.nameColumn]}>Pet Name</Text>
+              <Text style={[styles.tableHeaderCell, styles.portionColumn]}>Portion</Text>
               <Text style={[styles.tableHeaderCell, styles.visitsColumn]}>Visits</Text>
               <Text style={[styles.tableHeaderCell, styles.lastFedColumn]}>Last Fed</Text>
               <Text style={[styles.tableHeaderCell, styles.actionColumn]}>Action</Text>
@@ -698,12 +770,16 @@ const PetsScreen = () => {
                   style={styles.tableRow}
                   onPress={() => {
                     setSelectedPetForDetails(item);
+                    setSelectedPortionSize(item.portion_size || 'default');
                     setPetDetailsModalVisible(true);
                   }}
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.tableCell, styles.rfidColumn]}>{item.uid.slice(-8)}</Text>
                   <Text style={[styles.tableCell, styles.nameColumn]}>{item.name}</Text>
+                  <Text style={[styles.tableCell, styles.portionColumn]}>
+                    {item.portion_size === 'default' ? 'Default' : `${item.portion_size}%`}
+                  </Text>
                   <Text style={[styles.tableCell, styles.visitsColumn]}>{item.visit_count}</Text>
                   <Text style={[styles.tableCell, styles.lastFedColumn]}>{item.last_visit_str}</Text>
                   <View style={styles.actionColumn}>
@@ -1160,6 +1236,57 @@ const PetsScreen = () => {
                     <Text style={styles.detailValue}>{selectedPetForDetails?.inactive_hours}h</Text>
                   </View>
                 )}
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Current Portion:</Text>
+                  <Text style={styles.detailValue}>
+                    {selectedPetForDetails?.portion_size === 'default' 
+                      ? 'Default (Device Setting)' 
+                      : `${selectedPetForDetails?.portion_size}% (Custom)`}
+                  </Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Change Portion:</Text>
+                  <View style={styles.portionEditContainer}>
+                    <View style={styles.modalPicker} pointerEvents="auto">
+                      <RNPickerSelect
+                        onValueChange={(value) => setSelectedPortionSize(value || 'default')}
+                        items={[
+                          { label: 'Default (Device Setting)', value: 'default' },
+                          { label: '25% (Small)', value: '25' },
+                          { label: '50% (Medium)', value: '50' },
+                          { label: '75% (Large)', value: '75' },
+                          { label: '100% (Extra Large)', value: '100' },
+                        ]}
+                        style={{
+                          inputIOS: {
+                            color: '#fff',
+                            fontSize: 14,
+                            paddingVertical: 10,
+                            paddingHorizontal: 10,
+                            fontFamily: 'Poppins',
+                          },
+                          inputAndroid: {
+                            color: '#fff',
+                            fontSize: 14,
+                            paddingVertical: 10,
+                            paddingHorizontal: 10,
+                            fontFamily: 'Poppins',
+                            backgroundColor: 'transparent',
+                          },
+                        }}
+                        value={selectedPortionSize}
+                        useNativeAndroidPickerStyle={false}
+                        Icon={() => <FontAwesome5 name="chevron-down" size={12} color="#fff" />}
+                      />
+                    </View>
+                    <TouchableOpacity 
+                      style={styles.updatePortionButton}
+                      onPress={updatePetPortion}
+                    >
+                      <FontAwesome5 name="save" size={16} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Feeding Interval:</Text>
                   <Text style={styles.detailValue}>{data?.feeding_interval_hours || 4} hours</Text>
@@ -1748,6 +1875,9 @@ const styles = StyleSheet.create({
   nameColumn: {
     flex: 1.5,
   },
+  portionColumn: {
+    flex: 0.9,
+  },
   visitsColumn: {
     flex: 0.8,
   },
@@ -1790,8 +1920,23 @@ const styles = StyleSheet.create({
     color: '#FF9800', // Orange for cooldown
   },
   closeDetailsButton: {
-    backgroundColor: '#c27006ff',
+    backgroundColor: '#fbae3c',
     marginTop: 10,
+  },
+  portionEditContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  updatePortionButton: {
+    backgroundColor: '#fbae3c',
+    padding: 10,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 40,
+    minHeight: 40,
   },
 });
 
